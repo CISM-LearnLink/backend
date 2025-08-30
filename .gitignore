@@ -1,3 +1,6 @@
 node_modules/
 .env
 uploads/ 
+
+# Secret files
+utils/client_secret_*.json
