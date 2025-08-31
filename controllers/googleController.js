@@ -1,6 +1,12 @@
-const { getOAuth2Client } = require('../utils/googleAuth');
+require('dotenv').config();
+const { getOAuth2Client,getOAuth2ClientForLogin} = require('../utils/googleAuth');
 const User = require('../models/User');
 const { google } = require('googleapis');
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET) {
+  console.error('FATAL: JWT_SECRET environment variable is not set');
+  process.exit(1);
+}
 
 // Redirect user to Google OAuth consent screen
 exports.googleAuth = async (req, res) => {
@@ -177,3 +183,78 @@ exports.googleCallback = async (req, res) => {
     res.status(500).json({ success: false, message: 'Failed to get tokens', error: err.message });
   }
 }; 
+// For initial Google Login authentication 
+exports.googleLoginAuth = async (req, res) => {
+  const oauth2Client = getOAuth2ClientForLogin(); // ← Use login client
+  
+  const scopes = [
+    'https://www.googleapis.com/auth/userinfo.email',
+    'https://www.googleapis.com/auth/userinfo.profile',
+    'openid'
+  ];
+  
+  // ✅ NO NEED FOR EXPLICIT redirect_uri - it's built into the client
+  const url = oauth2Client.generateAuthUrl({
+    access_type: 'offline',
+    scope: scopes,
+    prompt: 'consent'
+  });
+  
+  res.redirect(url);
+};
+
+exports.googleLoginCallback = async (req, res) => {
+  debugger;
+  const oauth2Client = getOAuth2ClientForLogin();
+  const { code, error } = req.query;
+  if (error) {
+    return res.redirect('http://localhost:5173/login');
+  }
+  
+  if (!code) {
+    return res.redirect('http://localhost:5173/login');
+  }
+
+  try {
+    // Exchange code for tokens
+    const { tokens } = await oauth2Client.getToken(code);
+    
+    if (!tokens.access_token) {
+      return res.redirect('http://localhost:5173/login');
+    }
+    
+    oauth2Client.setCredentials(tokens);
+
+     const oauth2 = google.oauth2({ version: 'v2', auth: oauth2Client });
+    const { data: googleUser } = await oauth2.userinfo.get();
+    
+    // Find user in our database by email
+    const user = await User.findOne({ email: googleUser.email.toLowerCase() });
+    
+    // If user doesn't exist in our system, don't create anything!
+    if (!user) {
+      return res.redirect('http://localhost:5173/login');
+    }
+    
+    // Check if account is deactivated
+    if (user.status === 'deactivated') {
+      return res.redirect('http://localhost:5173/login');
+    }
+    
+   const payload = { 
+      user: { 
+        id: user.id, 
+        role: user.role
+      } 
+    };
+    
+    const jwtToken = jwt.sign(payload, JWT_SECRET, { expiresIn: '7d' });
+    
+    // Redirect to frontend with token
+    res.redirect(`http://localhost:5173/dashboard?token=${jwtToken}`);
+    
+  } catch (err) {
+    console.error('Google login error:', err);
+    res.redirect('http://localhost:5173');
+  }
+};

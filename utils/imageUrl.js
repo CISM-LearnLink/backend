@@ -1,5 +1,5 @@
 // Utility function to transform relative image paths to full URLs
-const BASE_URL = process.env.BASE_URL;
+const BASE_URL = process.env.BASE_URL || 'http://localhost:5001';
 
 function transformImageUrl(imagePath) {
   if (!imagePath) return null;
