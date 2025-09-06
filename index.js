@@ -64,6 +64,7 @@ parentRouter.get('/bookings-for-dispute', auth, parentController.getBookingsForD
 parentRouter.post('/disputes', auth, parentController.createDispute);
 parentRouter.get('/disputes/:disputeId', auth, parentController.getDisputeDetails);
 parentRouter.post('/disputes/:disputeId/message', auth, parentController.addDisputeMessage);
+parentRouter.get('/subjects-with-counts', auth, parentController.getSubjectsWithTutorCounts);
 app.use('/api/parent', parentRouter);
 
 // Tutor routes

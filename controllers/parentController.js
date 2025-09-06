@@ -6,6 +6,7 @@ const Booking = require('../models/Booking');
 const Review = require('../models/Review');
 const Message = require('../models/Message');
 const Waitlist = require('../models/Waitlist');
+const Subject = require('../models/Subject');
 const BookmarkSubject = require('../models/BookmarkSubject');
 const Dispute = require('../models/Dispute');
 const mongoose = require('mongoose');
@@ -34,7 +35,8 @@ exports.searchTutors = async (req, res) => {
       location,
       subject,
       page = 1,
-      limit = 10
+      limit = 10,
+      sortBy = 'rating' // ADDED: sortBy parameter with default
     } = req.query;
 
     // Build criteria for all filters present
@@ -42,7 +44,30 @@ exports.searchTutors = async (req, res) => {
       role: 'tutor',
       isVerified: true
     };
-    let sortCriteria = { rating: -1, totalReviews: -1 };
+    
+    // ADDED: Sorting logic
+    let sortCriteria = {};
+    switch(sortBy) {
+      case 'date':
+      case 'createdAt':
+      case 'newest':
+        sortCriteria = { date: -1 }; // Newest tutors first
+        break;
+      case 'rating':
+        sortCriteria = { rating: -1, totalReviews: -1 };
+        break;
+      case 'price_low':
+        sortCriteria = { 'subjects.hourlyRate': 1, rating: -1 };
+        break;
+      case 'price_high':
+        sortCriteria = { 'subjects.hourlyRate': -1, rating: -1 };
+        break;
+      case 'name':
+        sortCriteria = { name: 1 };
+        break;
+      default:
+        sortCriteria = { rating: -1, totalReviews: -1 };
+    }
 
     // Name filter
     if (name || search) {
@@ -101,10 +126,12 @@ exports.searchTutors = async (req, res) => {
         console.log('Created new subjects filter:', searchCriteria.subjects);
       }
       
+      // Override sort criteria when rate filtering is applied
       sortCriteria = { 'subjects.hourlyRate': 1, rating: -1 };
     }
 
     console.log('Search criteria:', JSON.stringify(searchCriteria, null, 2));
+    console.log('Sort criteria:', sortCriteria); // ADDED: Log sort criteria
 
     // Pagination
     const skip = (parseInt(page) - 1) * parseInt(limit);
@@ -113,7 +140,7 @@ exports.searchTutors = async (req, res) => {
     const tutors = await User.find(searchCriteria)
       .select('-password')
       .populate('subjects.subject')
-      .sort(sortCriteria)
+      .sort(sortCriteria) // MODIFIED: Use the dynamic sortCriteria
       .skip(skip)
       .limit(parseInt(limit))
       .lean(); // Use lean() for better performance
@@ -164,7 +191,8 @@ exports.searchTutors = async (req, res) => {
           hasNextPage,
           hasPrevPage,
           limit: parseInt(limit)
-        }
+        },
+        sortBy: sortBy // ADDED: Return the sort method used
       }
     });
   } catch (error) {
@@ -703,13 +731,14 @@ exports.getParentDashboard = async (req, res) => {
     // Get parent with child's preferred subjects
     const parent = await User.findById(parentId).populate('childPreferredSubjects');
     let recommendedTutors = [];
+    let childSubjectIds = [];
     
     if (parent && parent.childPreferredSubjects && parent.childPreferredSubjects.length > 0) {
-      const childSubjectIds = parent.childPreferredSubjects.map(s => s._id);
+      childSubjectIds = parent.childPreferredSubjects.map(s => s._id);
       console.log('Child preferred subjects:', childSubjectIds);
       
       // Find tutors who teach any of the child's preferred subjects
-      recommendedTutors = await User.find({
+      const tutorsWithAllSubjects = await User.find({
         role: 'tutor',
         isVerified: true,
         'subjects.subject': { $in: childSubjectIds }
@@ -719,7 +748,21 @@ exports.getParentDashboard = async (req, res) => {
         .sort({ rating: -1, totalReviews: -1 })
         .limit(8);
         
-      console.log(`Found ${recommendedTutors.length} tutors matching child's subjects`);
+      console.log(`Found ${tutorsWithAllSubjects.length} tutors matching child's subjects`);
+      
+      // FILTER: Only keep the subjects that match child's preferences
+      recommendedTutors = tutorsWithAllSubjects.map(tutor => {
+        const filteredSubjects = tutor.subjects.filter(subjectEntry => 
+          subjectEntry.subject && childSubjectIds.some(childSubjId => 
+            childSubjId.toString() === subjectEntry.subject._id.toString()
+          )
+        );
+        
+        return {
+          ...tutor.toObject(),
+          subjects: filteredSubjects
+        };
+      }).filter(tutor => tutor.subjects.length > 0); // Remove tutors with no matching subjects after filtering
     }
     
     // If no child preferred subjects or no matching tutors, show top-rated tutors
@@ -760,6 +803,7 @@ exports.getParentDashboard = async (req, res) => {
       select: '-password',
       populate: { path: 'subjects.subject' }
     }).populate('recentlyVisited.subjectId');
+    
     let recentlyVisited = [];
     if (parentWithVisits && parentWithVisits.recentlyVisited && parentWithVisits.recentlyVisited.length > 0) {
       recentlyVisited = parentWithVisits.recentlyVisited
@@ -778,7 +822,8 @@ exports.getParentDashboard = async (req, res) => {
         recommendedTutors: recommendedTutorsTransformed,
         bookings,
         waitlist,
-        recentlyVisited
+        recentlyVisited,
+        childSubjectIds // Optional: send child's subject IDs to frontend
       }
     });
   } catch (error) {
@@ -790,8 +835,6 @@ exports.getParentDashboard = async (req, res) => {
     });
   }
 };
-
-
 
 exports.getTutorBusyTimes = async (req, res) => {
   try {
@@ -1428,3 +1471,52 @@ exports.getTutorReviews = async (req, res) => {
     });
   }
 }; 
+
+// Get all subjects with tutor counts
+exports.getSubjectsWithTutorCounts = async (req, res) => {
+  try {
+    const [subjects, tutors] = await Promise.all([
+      Subject.find({}),
+      User.find({ 
+        role: 'tutor', 
+        isVerified: true 
+      }).select('subjects')
+    ]);
+    
+    const subjectCounts = {};
+    
+    // Count tutors for each subject
+    tutors.forEach(tutor => {
+      if (tutor.subjects && tutor.subjects.length > 0) {
+        tutor.subjects.forEach(subjectEntry => {
+          // Make sure subjectEntry.subject exists and is an ObjectId
+          if (subjectEntry.subject && subjectEntry.subject.toString) {
+            const subjectId = subjectEntry.subject.toString();
+            subjectCounts[subjectId] = (subjectCounts[subjectId] || 0) + 1;
+          }
+        });
+      }
+    });
+    
+    // Add counts to subjects
+    const subjectsWithCounts = subjects.map(subject => ({
+      ...subject.toObject(),
+      tutorsCount: subjectCounts[subject._id.toString()] || 0
+    }));
+    
+    res.json({
+      success: true,
+      data: {
+        subjects: subjectsWithCounts,
+        totalTutors: tutors.length
+      }
+    });
+  } catch (error) {
+    console.error('Get subjects with tutor counts error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching subjects with tutor counts',
+      error: error.message
+    });
+  }
+};
