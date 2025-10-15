@@ -19,9 +19,6 @@ const { transformTutorData } = require('../utils/imageUrl');
 const GOOGLE_CLIENT_ID = '955947755002-996k377jeeg89e3f0c8dr8c6tcmc7bvc.apps.googleusercontent.com';
 const GOOGLE_CLIENT_SECRET = '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';
 const GOOGLE_REDIRECT_URI = `${process.env.VITE_API_URL}/api/google/callback`;
-// --- HARDCODED TOKENS (replace with your real tokens) ---
-const GOOGLE_ACCESS_TOKEN = 'ya29.a0AW4XtxgnsUWqL-nTtaELM9Qx27LLS-Gmoexm9-c35-uT6UrBxJjuQjnS_gvAbS7Gxqt4NaTXqzw7iwR9j6-bexS8_Jw1ID39GHKGroSLTXqa6BXHGnEHRKqElOeo3mB1g-J8FHNwpUTgjnwT2tpWziCBPqW0upmzkd8i0LyAaCgYKAeUSARISFQHGX2MitZIZ2zeFuu9Jp89cjycqZQ0175';
-const GOOGLE_REFRESH_TOKEN = '1//0g_uKNBmGewe2CgYIARAAGBASNwF-L9IruJfxSBziBSEsdkg2tbLp62N5YVj20jhUYQj78Z8gcL4rbRd-D-xliXTptst3mZuc-ps';
 
 // Search tutors with advanced filtering and rule-based matching
 exports.searchTutors = async (req, res) => {
@@ -400,7 +397,7 @@ exports.getTutorProfile = async (req, res) => {
       .populate('subject', 'name _id')
       .sort({ createdAt: -1 })
       .limit(5);
-
+     console.log('recentReviews:', recentReviews);
     // Get booking statistics
     const totalSessions = await Booking.countDocuments({ 
       tutorId, 
@@ -412,7 +409,7 @@ exports.getTutorProfile = async (req, res) => {
       recentReviews,
       totalSessions
     };
-
+    console.log('responseData:', responseData);
     res.json({
       success: true,
       data: responseData
@@ -612,7 +609,7 @@ exports.getMessages = async (req, res) => {
     })
       .populate('senderId', 'name')
       .populate('receiverId', 'name')
-      .sort({ createdAt: -1 })
+      .sort({ createdAt: 1 })
       .skip(skip)
       .limit(parseInt(limit));
 
@@ -624,11 +621,11 @@ exports.getMessages = async (req, res) => {
     });
 
     const totalPages = Math.ceil(totalMessages / parseInt(limit));
-
+    console.log("Messages:", messages);
     res.json({
       success: true,
       data: {
-        messages: messages.reverse(), // Show oldest first
+        messages,// Show oldest first
         pagination: {
           currentPage: parseInt(page),
           totalPages,
@@ -992,6 +989,18 @@ exports.getAllTutorsBusyTimesForParent = async (req, res) => {
             }).then(() => deletedCount++);
           });
           await Promise.all(deletePromises);
+          // for (const event of listRes.data.items) {
+          //   try {
+          //     await calendar.events.delete({
+          //       calendarId: 'primary',
+          //       eventId: event.id,
+          //     });
+          //     deletedCount++;
+          //   } catch (err) {
+          //     console.error(`Failed to delete event ${event.id}:`, err.message);
+          //   }
+          // }
+          
         }
       } catch (err) {
         console.error('Could not delete old calendar events:', err.message);
@@ -1019,13 +1028,24 @@ exports.getAllTutorsBusyTimesForParent = async (req, res) => {
 
       // Insert events into Google Calendar (primary calendar)
       let insertedCount = 0;
-      const insertPromises = events.map(event => {
-        return calendar.events.insert({
-          calendarId: 'primary',
-          resource: event
-        }).then(() => insertedCount++);
-      });
-      await Promise.all(insertPromises);
+        const insertPromises = events.map(event => {
+          return calendar.events.insert({
+            calendarId: 'primary',
+            resource: event
+          }).then(() => insertedCount++);
+        });
+        await Promise.all(insertPromises);
+      // for (const event of events) {
+      //   try {
+      //     await calendar.events.insert({
+      //       calendarId: 'primary',
+      //       resource: event
+      //     });
+      //     insertedCount++;
+      //   } catch (err) {
+      //     console.error('Failed to insert event:', err.message);
+      //   }
+      //}
       
       syncMessage = `Synced calendar: ${insertedCount} new slots added, ${deletedCount} old slots removed.`;
     } catch (err) {

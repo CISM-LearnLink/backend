@@ -149,7 +149,7 @@ exports.googleCallback = async (req, res) => {
           <div class="message">Your Google Calendar has been successfully connected to LearnLink.</div>
           
           <div class="redirect-info">
-            <div>Redirecting to dashboard in <span id="countdown" class="countdown">3</span> seconds...</div>
+            <div>Redirecting to dashboard in <span id="countdown" class="countdown">in </span> seconds...</div>
             <div class="progress-bar">
               <div id="progress" class="progress-fill"></div>
             </div>
@@ -183,78 +183,3 @@ exports.googleCallback = async (req, res) => {
     res.status(500).json({ success: false, message: 'Failed to get tokens', error: err.message });
   }
 }; 
-// For initial Google Login authentication 
-exports.googleLoginAuth = async (req, res) => {
-  const oauth2Client = getOAuth2ClientForLogin(); // ← Use login client
-  
-  const scopes = [
-    'https://www.googleapis.com/auth/userinfo.email',
-    'https://www.googleapis.com/auth/userinfo.profile',
-    'openid'
-  ];
-  
-  // ✅ NO NEED FOR EXPLICIT redirect_uri - it's built into the client
-  const url = oauth2Client.generateAuthUrl({
-    access_type: 'offline',
-    scope: scopes,
-    prompt: 'consent'
-  });
-  
-  res.redirect(url);
-};
-
-exports.googleLoginCallback = async (req, res) => {
-  debugger;
-  const oauth2Client = getOAuth2ClientForLogin();
-  const { code, error } = req.query;
-  if (error) {
-    return res.redirect('http://localhost:5173/login');
-  }
-  
-  if (!code) {
-    return res.redirect('http://localhost:5173/login');
-  }
-
-  try {
-    // Exchange code for tokens
-    const { tokens } = await oauth2Client.getToken(code);
-    
-    if (!tokens.access_token) {
-      return res.redirect('http://localhost:5173/login');
-    }
-    
-    oauth2Client.setCredentials(tokens);
-
-     const oauth2 = google.oauth2({ version: 'v2', auth: oauth2Client });
-    const { data: googleUser } = await oauth2.userinfo.get();
-    
-    // Find user in our database by email
-    const user = await User.findOne({ email: googleUser.email.toLowerCase() });
-    
-    // If user doesn't exist in our system, don't create anything!
-    if (!user) {
-      return res.redirect('http://localhost:5173/login');
-    }
-    
-    // Check if account is deactivated
-    if (user.status === 'deactivated') {
-      return res.redirect('http://localhost:5173/login');
-    }
-    
-   const payload = { 
-      user: { 
-        id: user.id, 
-        role: user.role
-      } 
-    };
-    
-    const jwtToken = jwt.sign(payload, JWT_SECRET, { expiresIn: '7d' });
-    
-    // Redirect to frontend with token
-    res.redirect(`http://localhost:5173/dashboard?token=${jwtToken}`);
-    
-  } catch (err) {
-    console.error('Google login error:', err);
-    res.redirect('http://localhost:5173');
-  }
-};
