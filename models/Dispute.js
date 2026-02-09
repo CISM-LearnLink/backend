@@ -144,18 +144,18 @@ disputeSchema.index({ status: 1, priority: 1 });
 disputeSchema.index({ createdAt: -1 });
 
 // Pre-save middleware to update updatedAt
-disputeSchema.pre('save', function(next) {
+disputeSchema.pre('save', function (next) {
   this.updatedAt = new Date();
   next();
 });
 
 // Virtual for dispute age
-disputeSchema.virtual('age').get(function() {
+disputeSchema.virtual('age').get(function () {
   return Math.floor((Date.now() - this.createdAt) / (1000 * 60 * 60 * 24)); // Days
 });
 
 // Method to add message
-disputeSchema.methods.addMessage = function(senderId, senderRole, message, isInternal = false) {
+disputeSchema.methods.addMessage = function (senderId, senderRole, message, isInternal = false) {
   this.messages.push({
     senderId,
     senderRole,
@@ -166,7 +166,7 @@ disputeSchema.methods.addMessage = function(senderId, senderRole, message, isInt
 };
 
 // Method to resolve dispute
-disputeSchema.methods.resolve = function(resolution, resolutionType, adminNotes, resolvedBy) {
+disputeSchema.methods.resolve = function (resolution, resolutionType, adminNotes, resolvedBy) {
   this.status = 'resolved';
   this.resolution = resolution;
   this.resolutionType = resolutionType;
@@ -177,7 +177,7 @@ disputeSchema.methods.resolve = function(resolution, resolutionType, adminNotes,
 };
 
 // Static method to get disputes for a user
-disputeSchema.statics.getUserDisputes = function(userId, userRole) {
+disputeSchema.statics.getUserDisputes = function (userId, userRole) {
   const query = userRole === 'parent' ? { parentId: userId } : { tutorId: userId };
   return this.find(query)
     .populate('parentId', 'name email')
@@ -188,4 +188,3 @@ disputeSchema.statics.getUserDisputes = function(userId, userRole) {
     .sort({ createdAt: -1 });
 };
 
-module.exports = mongoose.model('Dispute', disputeSchema); 

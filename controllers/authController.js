@@ -125,6 +125,12 @@ exports.loginUser = async (req, res) => {
 
   const { email, password, role } = req.body;
   try {
+    if(!email){
+       return res.status(400).json({ msg: 'Email is required' });
+    }
+    if(!password){
+       return res.status(400).json({ msg: 'Password is required' });
+    }
     const user = await User.findOne({ email });
     if (!user) {
       console.log(`[Auth Controller] Login failed: No user found with email ${email}.`);
