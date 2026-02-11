@@ -14,7 +14,7 @@ const auth = async (req, res, next) => {
     return res.status(401).json({ success: false, message: 'No token, authorization denied' });
   }
   try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'bD4$9Yz2R!wJkX@70t3vLpA1qMeNgZxu');
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
     req.user = await User.findById(decoded.user.id).select('-password');
     if (!req.user) {
       return res.status(401).json({ success: false, message: 'User not found' });
@@ -29,16 +29,16 @@ const auth = async (req, res, next) => {
 const adminAuth = async (req, res, next) => {
   try {
     // First check if user is authenticated
-    await auth(req, res, () => {});
-    
+    await auth(req, res, () => { });
+
     // Then check if user has admin role
     if (req.user.role !== 'admin') {
-      return res.status(403).json({ 
-        success: false, 
-        message: 'Access denied. Admin privileges required.' 
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied. Admin privileges required.'
       });
     }
-    
+
     next();
   } catch (error) {
     res.status(401).json({ success: false, message: 'Authentication failed' });

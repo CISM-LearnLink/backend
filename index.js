@@ -17,6 +17,7 @@ require('./models/Review');
 require('./models/Waitlist');
 const helmet = require('helmet');
 // require('./models/Message'); // Uncomment if Message.js is present
+const { authLimiter, passwordResetLimiter, apiLimiter } = require('./middleware/rateLimit');
 
 const app = express();
 
@@ -33,11 +34,14 @@ app.use(express.urlencoded({ extended: true }));
 
 app.use(helmet());
 app.use(helmet.crossOriginResourcePolicy({ policy: "cross-origin" }));
-  
+
 app.use(express.json());
 
 // Serve static files from uploads directory
 app.use('/uploads', express.static('uploads'));
+
+// Apply general API rate limiter to all requests starting with /api
+app.use('/api', apiLimiter);
 
 // Parent routes
 const parentRouter = express.Router();
@@ -123,10 +127,10 @@ app.use('/api/admin', adminRouter);
 // Auth routes
 const authRouter = express.Router();
 const authController = require('./controllers/authController');
-authRouter.post('/register', uploadProfileImage.single('profileImage'), handleUploadError, authController.registerUser);
-authRouter.post('/login', authController.loginUser);
-authRouter.post('/forgot-password', authController.requestPasswordReset);
-authRouter.post('/reset-password', authController.resetPassword);
+authRouter.post('/register', authLimiter, uploadProfileImage.single('profileImage'), handleUploadError, authController.registerUser);
+authRouter.post('/login', authLimiter, authController.loginUser);
+authRouter.post('/forgot-password', passwordResetLimiter, authController.requestPasswordReset);
+authRouter.post('/reset-password', passwordResetLimiter, authController.resetPassword);
 authRouter.get('/me', auth, authController.getMe);
 authRouter.put('/me', auth, uploadProfileImage.single('profileImage'), handleUploadError, authController.updateMe);
 app.use('/api/auth', authRouter);
