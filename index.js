@@ -30,11 +30,14 @@ app.use(cors({
   credentials: true
 }));
 
+const cookieParser = require('cookie-parser');
+
 app.use(express.urlencoded({ extended: true }));
 
 app.use(helmet());
 app.use(helmet.crossOriginResourcePolicy({ policy: "cross-origin" }));
 
+app.use(cookieParser());
 app.use(express.json());
 
 // Serve static files from uploads directory
@@ -133,6 +136,8 @@ authRouter.post('/forgot-password', passwordResetLimiter, authController.request
 authRouter.post('/reset-password', passwordResetLimiter, authController.resetPassword);
 authRouter.get('/me', auth, authController.getMe);
 authRouter.put('/me', auth, uploadProfileImage.single('profileImage'), handleUploadError, authController.updateMe);
+authRouter.get('/refresh-token', authController.refreshToken);
+authRouter.post('/logout', authController.logoutUser);
 app.use('/api/auth', authRouter);
 
 app.get('/api/subjects', tutorController.getAllSubjects);

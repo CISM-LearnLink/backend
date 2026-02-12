@@ -120,9 +120,9 @@ exports.getUserDetails = async (req, res) => {
     if (user.role === 'tutor') {
       // Get tutor-specific data
       const totalBookings = await Booking.countDocuments({ tutorId: userId });
-      const completedBookings = await Booking.countDocuments({ 
-        tutorId: userId, 
-        status: 'completed' 
+      const completedBookings = await Booking.countDocuments({
+        tutorId: userId,
+        status: 'completed'
       });
       const totalReviews = await Review.countDocuments({ tutorId: userId });
       const averageRating = await Review.aggregate([
@@ -139,9 +139,9 @@ exports.getUserDetails = async (req, res) => {
     } else if (user.role === 'parent') {
       // Get parent-specific data
       const totalBookings = await Booking.countDocuments({ parentId: userId });
-      const completedBookings = await Booking.countDocuments({ 
-        parentId: userId, 
-        status: 'completed' 
+      const completedBookings = await Booking.countDocuments({
+        parentId: userId,
+        status: 'completed'
       });
       const totalReviews = await Review.countDocuments({ parentId: userId });
 
@@ -281,7 +281,7 @@ exports.bulkVerifyTutors = async (req, res) => {
     res.json({
       success: true,
       message: `${result.modifiedCount} tutors ${action}ed successfully`,
-      data: { 
+      data: {
         totalProcessed: result.modifiedCount,
         action,
         reason
@@ -306,7 +306,7 @@ exports.monitorActivity = async (req, res) => {
     // Calculate date range
     const endDate = new Date();
     const startDate = new Date();
-    
+
     switch (period) {
       case '24h':
         startDate.setDate(startDate.getDate() - 1);
@@ -455,8 +455,8 @@ exports.monitorActivity = async (req, res) => {
     const verifiedTutors = await User.countDocuments({ role: 'tutor', isVerified: true, status: { $ne: 'deactivated' } });
     const totalParents = await User.countDocuments({ role: 'parent', status: { $ne: 'deactivated' } });
     const totalBookings = await Booking.countDocuments({});
-    const activeBookings = await Booking.countDocuments({ 
-      status: { $in: ['requested', 'confirmed'] } 
+    const activeBookings = await Booking.countDocuments({
+      status: { $in: ['requested', 'confirmed'] }
     });
     const totalReviews = await Review.countDocuments({});
     const flaggedReviews = await Review.countDocuments({ isFlagged: true });
@@ -549,7 +549,7 @@ exports.handleDispute = async (req, res) => {
       },
       { new: true }
     ).populate('parentId', 'name email')
-     .populate('tutorId', 'name email');
+      .populate('tutorId', 'name email');
 
     // Log dispute handling
     console.log(`Dispute handled for booking ${bookingId}: ${disputeType} - ${resolution || 'Pending'}`);
@@ -557,7 +557,7 @@ exports.handleDispute = async (req, res) => {
     res.json({
       success: true,
       message: 'Dispute handled successfully',
-      data: { 
+      data: {
         booking: updatedBooking,
         dispute
       }
@@ -804,9 +804,9 @@ exports.updateDisputePriority = async (req, res) => {
       { priority },
       { new: true }
     ).populate('parentId', 'name email')
-     .populate('tutorId', 'name email')
-     .populate('bookingId', 'sessionTime subject')
-     .populate('subjectId', 'name');
+      .populate('tutorId', 'name email')
+      .populate('bookingId', 'sessionTime subject')
+      .populate('subjectId', 'name');
 
     if (!dispute) {
       return res.status(404).json({
@@ -925,15 +925,15 @@ exports.manageFeedback = async (req, res) => {
       updateData,
       { new: true }
     ).populate('parentId', 'name')
-     .populate('tutorId', 'name');
+      .populate('tutorId', 'name');
 
     // If review was removed, recalculate tutor's average rating
     if (action === 'remove') {
-      const tutorReviews = await Review.find({ 
+      const tutorReviews = await Review.find({
         tutorId: review.tutorId,
         isRemoved: { $ne: true }
       });
-      
+
       const averageRating = tutorReviews.reduce((sum, rev) => sum + rev.rating, 0) / tutorReviews.length;
 
       await User.findByIdAndUpdate(review.tutorId, {
@@ -961,13 +961,13 @@ exports.manageFeedback = async (req, res) => {
 // Get all reviews with admin management
 exports.getAllReviews = async (req, res) => {
   try {
-    const { 
-      status, 
-      rating, 
-      tutorId, 
-      parentId, 
-      page = 1, 
-      limit = 20 
+    const {
+      status,
+      rating,
+      tutorId,
+      parentId,
+      page = 1,
+      limit = 20
     } = req.query;
 
     const searchCriteria = {};
@@ -1048,8 +1048,8 @@ exports.getDashboardOverview = async (req, res) => {
     const verifiedTutors = await User.countDocuments({ role: 'tutor', isVerified: true, status: { $ne: 'deactivated' } });
     const totalParents = await User.countDocuments({ role: 'parent', status: { $ne: 'deactivated' } });
     const totalBookings = await Booking.countDocuments({});
-    const activeBookings = await Booking.countDocuments({ 
-      status: { $in: ['requested', 'confirmed'] } 
+    const activeBookings = await Booking.countDocuments({
+      status: { $in: ['requested', 'confirmed'] }
     });
     const totalReviews = await Review.countDocuments({});
     const flaggedReviews = await Review.countDocuments({ isFlagged: true });
@@ -1150,6 +1150,12 @@ exports.updateUserStatus = async (req, res) => {
       statusUpdateDate: new Date()
     };
 
+    // If activating, also reset lockout counters
+    if (action === 'activate') {
+      updateData.lockoutUntil = null;
+      updateData.failedLoginAttempts = 0;
+    }
+
     if (action === 'deactivate' && reason) {
       updateData.deactivationReason = reason;
     }
@@ -1185,7 +1191,7 @@ exports.updateUserStatus = async (req, res) => {
 exports.getAllSubjects = async (req, res) => {
   try {
     const subjects = await Subject.find({}).sort({ createdAt: -1 });
-    
+
     res.json({
       success: true,
       data: subjects
@@ -1256,7 +1262,7 @@ exports.updateSubject = async (req, res) => {
   try {
     const { subjectId } = req.params;
     const { name } = req.body;
-    
+
     console.log('Update subject request:', { subjectId, name });
 
     if (!name) {
@@ -1277,11 +1283,11 @@ exports.updateSubject = async (req, res) => {
     }
 
     // Check if new name conflicts with existing subject (excluding current subject)
-    const nameConflict = await Subject.findOne({ 
+    const nameConflict = await Subject.findOne({
       name: { $regex: new RegExp(`^${name}$`, 'i') },
       _id: { $ne: subjectId }
     });
-    
+
     if (nameConflict) {
       console.log('Name conflict found:', nameConflict.name);
       return res.status(400).json({

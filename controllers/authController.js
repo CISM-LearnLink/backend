@@ -10,6 +10,49 @@ if (!JWT_SECRET) {
   console.warn('WARNING: JWT_SECRET is not defined in environment variables.');
 }
 
+// Generate Access and Refresh Tokens
+const sendTokenResponse = async (user, statusCode, res) => {
+  // Create Access Token (Short-lived: 15m)
+  const accessToken = jwt.sign(
+    { user: { id: user.id, role: user.role, tokenVersion: user.tokenVersion } },
+    process.env.JWT_SECRET,
+    { expiresIn: '15m' }
+  );
+
+  // Create Refresh Token (Long-lived: 7d)
+  const refreshToken = jwt.sign(
+    { user: { id: user.id, tokenVersion: user.tokenVersion } },
+    process.env.JWT_SECRET,
+    { expiresIn: '7d' }
+  );
+
+  // Save Refresh Token to Database
+  user.refreshToken = refreshToken;
+  await user.save();
+
+  // Set Cookie Options
+  const options = {
+    expires: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7 days
+    httpOnly: true, // Prevent JS access
+    secure: process.env.NODE_ENV === 'production', // Only send over HTTPS in production
+    sameSite: 'strict'
+  };
+
+  res
+    .status(statusCode)
+    .cookie('refreshToken', refreshToken, options)
+    .json({
+      success: true,
+      token: accessToken,
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        role: user.role
+      }
+    });
+};
+
 exports.registerUser = async (req, res) => {
   // --- Start of Debugging Logs for Register ---
   console.log('--- [Auth Controller] Received a request to /register ---');
@@ -43,15 +86,17 @@ exports.registerUser = async (req, res) => {
       console.log(`[Auth Controller] Registration failed: User with email ${email} already exists.`);
       return res.status(400).json({ msg: 'User already exists' });
     }
-    // Build user object
-    const userData = { name, email, password, role };
+    // Build user object - Strictly enforce role to be 'parent' or 'tutor'
+    // Prevent anyone from registering as 'admin' via public API
+    const safeRole = role === 'tutor' ? 'tutor' : 'parent';
+    const userData = { name, email, password, role: safeRole };
 
     // Handle profile image upload
     if (req.file) {
       userData.profileImage = `/uploads/profiles/${req.file.filename}`;
     }
 
-    if (role === 'tutor') {
+    if (safeRole === 'tutor') {
       if (education) userData.education = education;
       if (bio) userData.bio = bio;
       if (location) userData.location = location;
@@ -69,7 +114,7 @@ exports.registerUser = async (req, res) => {
         }
       }
     }
-    if (role === 'parent') {
+    if (safeRole === 'parent') {
       if (preferredSubjects && Array.isArray(preferredSubjects)) {
         userData.preferredSubjects = preferredSubjects;
       }
@@ -100,16 +145,8 @@ exports.registerUser = async (req, res) => {
     await user.save();
     console.log(`[Auth Controller] Registration successful: New user created with ID ${user.id}`);
 
-    const payload = { user: { id: user.id, role: user.role } };
-    jwt.sign(
-      payload,
-      JWT_SECRET,
-      { expiresIn: '7d' },
-      (err, token) => {
-        if (err) throw err;
-        res.json({ token });
-      }
-    );
+    const payload = { user: { id: user.id, role: user.role, tokenVersion: user.tokenVersion } };
+    await sendTokenResponse(user, 201, res);
   } catch (err) {
     console.error('[Auth Controller] CRITICAL ERROR during registration:', err.message);
     res.status(500).send('Server error');
@@ -154,23 +191,40 @@ exports.loginUser = async (req, res) => {
       }
     }
 
+    // Check if account is locked
+    if (user.lockoutUntil && user.lockoutUntil > Date.now()) {
+      const remainingTime = Math.ceil((user.lockoutUntil - Date.now()) / 60000);
+      console.log(`[Auth Controller] Login failed: Account ${email} is temporarily locked.`);
+      return res.status(403).json({ msg: `Account is temporarily locked. Please try again in ${remainingTime} minutes.` });
+    }
+
     const isMatch = await bcrypt.compare(password, user.password);
     if (!isMatch) {
-      console.log(`[Auth Controller] Login failed: Password does not match for user ${email}.`);
+      // Increment failed login attempts
+      user.failedLoginAttempts = (user.failedLoginAttempts || 0) + 1;
+
+      // Check if max attempts reached (e.g., 5 attempts)
+      if (user.failedLoginAttempts >= 5) {
+        user.lockoutUntil = Date.now() + 15 * 60 * 1000; // 15 minutes lock
+        console.log(`[Auth Controller] Account ${email} locked due to too many failed attempts.`);
+      }
+
+      await user.save();
+
+      console.log(`[Auth Controller] Login failed: Password does not match for user ${email}. Attempts: ${user.failedLoginAttempts}`);
       return res.status(400).json({ msg: 'Invalid Credentials' });
     }
 
+    // Reset failed attempts and lockout on successful login
+    if (user.failedLoginAttempts > 0 || user.lockoutUntil) {
+      user.failedLoginAttempts = 0;
+      user.lockoutUntil = null;
+      await user.save();
+    }
+
     console.log(`[Auth Controller] Login successful: User ${email} authenticated with role ${user.role}.`);
-    const payload = { user: { id: user.id, role: user.role } };
-    jwt.sign(
-      payload,
-      JWT_SECRET,
-      { expiresIn: '7d' },
-      (err, token) => {
-        if (err) throw err;
-        res.json({ token });
-      }
-    );
+    const payload = { user: { id: user.id, role: user.role, tokenVersion: user.tokenVersion } };
+    await sendTokenResponse(user, 200, res);
   } catch (err) {
     console.error('[Auth Controller] CRITICAL ERROR during login:', err.message);
     res.status(500).send('Server error');
@@ -326,6 +380,8 @@ exports.resetPassword = async (req, res) => {
     // Hash new password
     const salt = await bcrypt.genSalt(10);
     user.password = await bcrypt.hash(newPassword, salt);
+    // Increment tokenVersion to invalidate all existing tokens
+    user.tokenVersion = (user.tokenVersion || 0) + 1;
     await user.save();
 
     // Delete the used reset token
@@ -336,5 +392,73 @@ exports.resetPassword = async (req, res) => {
   } catch (err) {
     console.error('[Auth Controller] Error in resetPassword:', err.message);
     res.status(500).json({ msg: 'Server error' });
+  }
+};
+
+// Refresh Access Token
+exports.refreshToken = async (req, res) => {
+  try {
+    const refreshToken = req.cookies.refreshToken;
+
+    if (!refreshToken) {
+      return res.status(401).json({ success: false, message: 'No refresh token provided' });
+    }
+
+    // Verify token
+    const decoded = jwt.verify(refreshToken, process.env.JWT_SECRET);
+
+    // Find user
+    const user = await User.findById(decoded.user.id);
+
+    if (!user) {
+      return res.status(401).json({ success: false, message: 'User not found' });
+    }
+
+    // Check if token matches DB (Revocation check)
+    if (user.refreshToken !== refreshToken) {
+      return res.status(401).json({ success: false, message: 'Invalid refresh token' });
+    }
+
+    // Check token version (for password reset invalidation)
+    if (user.tokenVersion !== decoded.user.tokenVersion) {
+      return res.status(401).json({ success: false, message: 'Token is invalid (password changed)' });
+    }
+
+    // Issue new tokens
+    await sendTokenResponse(user, 200, res);
+
+  } catch (err) {
+    console.error('Refresh Token Error:', err.message);
+    return res.status(401).json({ success: false, message: 'Invalid refresh token' });
+  }
+};
+
+// Logout User
+exports.logoutUser = async (req, res) => {
+  try {
+    // Clear cookie
+    res.cookie('refreshToken', 'none', {
+      expires: new Date(Date.now() + 10 * 1000),
+      httpOnly: true
+    });
+
+    const refreshToken = req.cookies.refreshToken;
+    if (refreshToken) {
+      try {
+        const decoded = jwt.verify(refreshToken, process.env.JWT_SECRET);
+        const user = await User.findById(decoded.user.id);
+        if (user) {
+          user.refreshToken = ''; // Clear token in DB for stricter security
+          await user.save();
+        }
+      } catch (e) {
+        // Ignore verification errors on logout
+      }
+    }
+
+    res.status(200).json({ success: true, message: 'User logged out successfully' });
+  } catch (err) {
+    console.error('Logout Error:', err.message);
+    res.status(500).json({ success: false, message: 'Server error' });
   }
 };

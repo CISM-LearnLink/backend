@@ -19,6 +19,13 @@ const auth = async (req, res, next) => {
     if (!req.user) {
       return res.status(401).json({ success: false, message: 'User not found' });
     }
+    // Check for token invalidation (password reset or logout)
+    if (decoded.user.tokenVersion !== undefined &&
+      req.user.tokenVersion !== undefined &&
+      decoded.user.tokenVersion !== req.user.tokenVersion) {
+      return res.status(401).json({ success: false, message: 'Token is invalid (password changed or logged out)' });
+    }
+
     next();
   } catch (err) {
     res.status(401).json({ success: false, message: 'Token is not valid' });
