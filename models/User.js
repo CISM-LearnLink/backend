@@ -7,7 +7,7 @@ const UserSchema = new mongoose.Schema({
   role: { type: String, enum: ['parent', 'tutor', 'admin'], default: 'parent' },
   date: { type: Date, default: Date.now },
   status: { type: String, enum: [null, 'rejected', 'deactivated'], default: null },
-  
+
   // Parent-specific fields (child details)
   childName: { type: String },
   childAge: { type: Number },
@@ -15,7 +15,7 @@ const UserSchema = new mongoose.Schema({
   childPreferredSubjects: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Subject' }],
   childLearningGoals: { type: String },
   childSpecialNeeds: { type: String },
-  
+
   // Tutor-specific fields
   subjects: [{
     subject: { type: mongoose.Schema.Types.ObjectId, ref: 'Subject', required: true },
@@ -43,7 +43,11 @@ const UserSchema = new mongoose.Schema({
     tutorId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     subjectId: { type: mongoose.Schema.Types.ObjectId, ref: 'Subject' },
     visitedAt: { type: Date, default: Date.now }
-  }]
+  }],
+  tokenVersion: { type: Number, default: 0 },
+  failedLoginAttempts: { type: Number, default: 0 },
+  lockoutUntil: { type: Date, default: null },
+  refreshToken: { type: String }
 });
 
 module.exports = mongoose.model('User', UserSchema); 
