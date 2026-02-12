@@ -17,6 +17,7 @@ require('./models/Review');
 require('./models/Waitlist');
 const helmet = require('helmet');
 // require('./models/Message'); // Uncomment if Message.js is present
+const { authLimiter, passwordResetLimiter, apiLimiter, refreshTokenLimiter } = require('./middleware/rateLimit');
 
 const app = express();
 
@@ -29,15 +30,44 @@ app.use(cors({
   credentials: true
 }));
 
+const cookieParser = require('cookie-parser');
+
 app.use(express.urlencoded({ extended: true }));
 
+
 app.use(helmet());
+// SECURITY: Strict Content Security Policy to mitigate XSS attacks
+app.use(helmet.contentSecurityPolicy({
+  directives: {
+    defaultSrc: ["'self'"],
+    scriptSrc: [
+      "'self'",
+      "'unsafe-inline'", // Required for React dev mode
+      "https://www.google.com/recaptcha/",
+      "https://www.gstatic.com/recaptcha/"
+    ],
+    styleSrc: ["'self'", "'unsafe-inline'"], // unsafe-inline needed for inline styles
+    imgSrc: ["'self'", "data:", "https:", "http:"],
+    connectSrc: ["'self'"],
+    frameSrc: ["https://www.google.com/recaptcha/"],
+    objectSrc: ["'none'"],
+    upgradeInsecureRequests: []
+  }
+}));
 app.use(helmet.crossOriginResourcePolicy({ policy: "cross-origin" }));
-  
+app.use(helmet.referrerPolicy({ policy: 'strict-origin-when-cross-origin' }));
+app.use(helmet.hsts({ maxAge: 31536000, includeSubDomains: true }));
+app.use(helmet.noSniff());
+app.use(helmet.xssFilter());
+
+app.use(cookieParser());
 app.use(express.json());
 
 // Serve static files from uploads directory
 app.use('/uploads', express.static('uploads'));
+
+// Apply general API rate limiter to all requests starting with /api
+app.use('/api', apiLimiter);
 
 // Parent routes
 const parentRouter = express.Router();
@@ -123,12 +153,16 @@ app.use('/api/admin', adminRouter);
 // Auth routes
 const authRouter = express.Router();
 const authController = require('./controllers/authController');
-authRouter.post('/register', uploadProfileImage.single('profileImage'), handleUploadError, authController.registerUser);
-authRouter.post('/login', authController.loginUser);
-authRouter.post('/forgot-password', authController.requestPasswordReset);
-authRouter.post('/reset-password', authController.resetPassword);
+const { verifyRecaptcha } = require('./middleware/recaptcha');
+
+authRouter.post('/register', authLimiter, uploadProfileImage.single('profileImage'), handleUploadError, verifyRecaptcha, authController.registerUser);
+authRouter.post('/login', authLimiter, verifyRecaptcha, authController.loginUser);
+authRouter.post('/forgot-password', passwordResetLimiter, authController.requestPasswordReset);
+authRouter.post('/reset-password', passwordResetLimiter, authController.resetPassword);
 authRouter.get('/me', auth, authController.getMe);
 authRouter.put('/me', auth, uploadProfileImage.single('profileImage'), handleUploadError, authController.updateMe);
+authRouter.get('/refresh-token', refreshTokenLimiter, authController.refreshToken);
+authRouter.post('/logout', authController.logoutUser);
 app.use('/api/auth', authRouter);
 
 app.get('/api/subjects', tutorController.getAllSubjects);
