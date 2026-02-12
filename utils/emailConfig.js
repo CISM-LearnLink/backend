@@ -10,9 +10,11 @@ const transporter = nodemailer.createTransport({
   }
 });
 
-// Generate a random 6-digit OTP
+const crypto = require('crypto');
+
+// Generate a random 6-digit OTP using cryptographically secure random numbers
 const generateOTP = () => {
-  return Math.floor(100000 + Math.random() * 900000).toString();
+  return crypto.randomInt(100000, 999999).toString();
 };
 
 // Send OTP email
@@ -39,7 +41,7 @@ const sendOTPEmail = async (email, otp) => {
           </div>
           
           <p style="color: #666; line-height: 1.6; margin-bottom: 20px;">
-            This OTP will expire in <strong>10 minutes</strong>. If you didn't request this password reset, please ignore this email.
+            This OTP will expire in <strong>5 minutes</strong>. If you didn't request this password reset, please ignore this email.
           </p>
         </div>
         

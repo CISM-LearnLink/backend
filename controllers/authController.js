@@ -2,7 +2,13 @@ const User = require('../models/User');
 const PasswordReset = require('../models/PasswordReset');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const crypto = require('crypto');
 const { generateOTP, sendOTPEmail } = require('../utils/emailConfig');
+
+// Helper function to hash refresh tokens before storage
+const hashToken = (token) => {
+  return crypto.createHash('sha256').update(token).digest('hex');
+};
 
 // Use environment variable for JWT_SECRET
 const JWT_SECRET = process.env.JWT_SECRET;
@@ -26,8 +32,9 @@ const sendTokenResponse = async (user, statusCode, res) => {
     { expiresIn: '7d' }
   );
 
-  // Save Refresh Token to Database
-  user.refreshToken = refreshToken;
+  // Hash refresh token before storing in database (SECURITY: Prevent token theft on DB breach)
+  const hashedRefreshToken = hashToken(refreshToken);
+  user.refreshToken = hashedRefreshToken;
   await user.save();
 
   // Set Cookie Options
@@ -198,6 +205,14 @@ exports.loginUser = async (req, res) => {
       return res.status(403).json({ msg: `Account is temporarily locked. Please try again in ${remainingTime} minutes.` });
     }
 
+    // If lockout has expired, reset failed attempts counter
+    if (user.lockoutUntil && user.lockoutUntil <= Date.now()) {
+      user.failedLoginAttempts = 0;
+      user.lockoutUntil = null;
+      await user.save();
+      console.log(`[Auth Controller] Lockout expired for ${email}, failed attempts reset.`);
+    }
+
     const isMatch = await bcrypt.compare(password, user.password);
     if (!isMatch) {
       // Increment failed login attempts
@@ -206,7 +221,13 @@ exports.loginUser = async (req, res) => {
       // Check if max attempts reached (e.g., 5 attempts)
       if (user.failedLoginAttempts >= 5) {
         user.lockoutUntil = Date.now() + 15 * 60 * 1000; // 15 minutes lock
+        await user.save();
+
+        const remainingTime = Math.ceil((user.lockoutUntil - Date.now()) / 60000);
         console.log(`[Auth Controller] Account ${email} locked due to too many failed attempts.`);
+        return res.status(403).json({
+          msg: `Account locked due to multiple failed login attempts. Please try again in ${remainingTime} minutes.`
+        });
       }
 
       await user.save();
@@ -322,7 +343,7 @@ exports.requestPasswordReset = async (req, res) => {
 
     // Generate OTP
     const otp = generateOTP();
-    const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+    const expiresAt = new Date(Date.now() + 5 * 60 * 1000); // 5 minutes (NIST recommendation)
 
     // Delete any existing reset tokens for this email
     await PasswordReset.deleteMany({ email });
@@ -414,8 +435,9 @@ exports.refreshToken = async (req, res) => {
       return res.status(401).json({ success: false, message: 'User not found' });
     }
 
-    // Check if token matches DB (Revocation check)
-    if (user.refreshToken !== refreshToken) {
+    // Hash the incoming token and compare with stored hash (SECURITY: Tokens are hashed in DB)
+    const hashedIncomingToken = hashToken(refreshToken);
+    if (user.refreshToken !== hashedIncomingToken) {
       return res.status(401).json({ success: false, message: 'Invalid refresh token' });
     }
 
@@ -448,17 +470,20 @@ exports.logoutUser = async (req, res) => {
         const decoded = jwt.verify(refreshToken, process.env.JWT_SECRET);
         const user = await User.findById(decoded.user.id);
         if (user) {
-          user.refreshToken = ''; // Clear token in DB for stricter security
+          // SECURITY: Clear refresh token AND increment version to invalidate all access tokens
+          user.refreshToken = '';
+          user.tokenVersion = (user.tokenVersion || 0) + 1;
           await user.save();
+          console.log(`[Auth Controller] User ${user.email} logged out. Token version incremented to ${user.tokenVersion}.`);
         }
       } catch (e) {
         // Ignore verification errors on logout
       }
     }
 
-    res.status(200).json({ success: true, message: 'User logged out successfully' });
+    res.status(200).json({ success: true, message: 'Logged out successfully' });
   } catch (err) {
-    console.error('Logout Error:', err.message);
-    res.status(500).json({ success: false, message: 'Server error' });
+    console.error('[Auth Controller] Logout error:', err.message);
+    res.status(500).json({ success: false, message: 'Logout failed' });
   }
 };

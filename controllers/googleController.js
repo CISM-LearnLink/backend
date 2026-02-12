@@ -1,7 +1,8 @@
 require('dotenv').config();
-const { getOAuth2Client,getOAuth2ClientForLogin} = require('../utils/googleAuth');
+const { getOAuth2Client, getOAuth2ClientForLogin } = require('../utils/googleAuth');
 const User = require('../models/User');
 const { google } = require('googleapis');
+const crypto = require('crypto');
 const JWT_SECRET = process.env.JWT_SECRET;
 if (!JWT_SECRET) {
   console.error('FATAL: JWT_SECRET environment variable is not set');
@@ -12,19 +13,34 @@ if (!JWT_SECRET) {
 exports.googleAuth = async (req, res) => {
   const { userId } = req.params;
   const oauth2Client = getOAuth2Client();
+
   // Get the user's email from the database
   const user = await User.findById(userId);
   if (!user) return res.status(404).send('User not found');
+
+  // SECURITY: Generate a random state to prevent OAuth CSRF
+  const state = crypto.randomBytes(32).toString('hex');
+
+  // Store the state and userId in a cookie for verification in the callback
+  // Using a JSON string to store both
+  const stateData = JSON.stringify({ state, userId });
+  res.cookie('google_auth_state', stateData, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    maxAge: 10 * 60 * 1000 // 10 minutes
+  });
+
   const scopes = [
     'https://www.googleapis.com/auth/calendar',
     'https://www.googleapis.com/auth/calendar.events',
     'https://www.googleapis.com/auth/userinfo.email'
   ];
+
   const url = oauth2Client.generateAuthUrl({
     access_type: 'offline',
     scope: scopes,
     prompt: 'consent',
-    state: userId,
+    state: state, // Send only the random string to Google
     login_hint: user.email // Pre-fill the email in the Google login
   });
   res.redirect(url);
@@ -33,8 +49,34 @@ exports.googleAuth = async (req, res) => {
 // Handle OAuth callback, exchange code for tokens, and save to user
 exports.googleCallback = async (req, res) => {
   const oauth2Client = getOAuth2Client();
-  const { code, state } = req.query; // state = userId
-  if (!code || !state) return res.status(400).send('Missing code or userId');
+  const { code, state: incomingState } = req.query;
+
+  // Get stored state from cookie
+  const storedStateCookie = req.cookies.google_auth_state;
+  if (!storedStateCookie) {
+    return res.status(400).send('Authorization session expired. Please try again.');
+  }
+
+  let stateData;
+  try {
+    stateData = JSON.parse(storedStateCookie);
+  } catch (e) {
+    return res.status(400).send('Invalid session data.');
+  }
+
+  const { state: originalState, userId } = stateData;
+
+  // SECURITY: Verify the random state to prevent CSRF
+  if (!incomingState || incomingState !== originalState) {
+    console.error('[Google OAuth] State mismatch! Possible CSRF attack detected.');
+    return res.status(403).send('Security verification failed. Request blocked.');
+  }
+
+  if (!code) return res.status(400).send('Missing authorization code');
+
+  // Clear the state cookie
+  res.clearCookie('google_auth_state');
+
   try {
     const { tokens } = await oauth2Client.getToken(code);
     if (!tokens.access_token) {
@@ -45,18 +87,18 @@ exports.googleCallback = async (req, res) => {
     const oauth2 = google.oauth2({ version: 'v2', auth: oauth2Client });
     const { data: googleUser } = await oauth2.userinfo.get();
     // Get your user from DB
-    const user = await User.findById(state);
+    const user = await User.findById(userId);
     if (!user) return res.status(404).send('User not found');
     // Compare emails
     if (user.email.toLowerCase() !== googleUser.email.toLowerCase()) {
       return res.status(400).send('Google account email does not match your registered email.');
     }
     // Save tokens
-    await User.findByIdAndUpdate(state, {
+    await User.findByIdAndUpdate(userId, {
       googleAccessToken: tokens.access_token,
       googleRefreshToken: tokens.refresh_token
     });
-    
+
     // Send HTML page with success message and redirect
     res.send(`
       <!DOCTYPE html>

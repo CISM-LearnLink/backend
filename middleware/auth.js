@@ -19,6 +19,15 @@ const auth = async (req, res, next) => {
     if (!req.user) {
       return res.status(401).json({ success: false, message: 'User not found' });
     }
+
+    // SECURITY: Check if account is deactivated
+    if (req.user.status === 'deactivated') {
+      return res.status(403).json({
+        success: false,
+        message: 'Account has been deactivated. Please contact support.'
+      });
+    }
+
     // Check for token invalidation (password reset or logout)
     if (decoded.user.tokenVersion !== undefined &&
       req.user.tokenVersion !== undefined &&

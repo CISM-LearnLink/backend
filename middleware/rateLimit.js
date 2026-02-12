@@ -1,13 +1,13 @@
 const rateLimit = require('express-rate-limit');
 
 // Limiter for login/register attempts - strict
-// 15 minutes window, 5 attempts max
+// 15 minutes window, 10 attempts max (higher than account lockout to avoid double-trigger)
 const authLimiter = rateLimit({
     windowMs: 15 * 60 * 1000, // 15 minutes
-    max: 5, // Limit each IP to 5 requests per `window` (here, per 15 minutes)
+    max: 10, // Limit each IP to 10 requests per `window` (account lockout handles lower threshold)
     message: {
         success: false,
-        msg: 'Too many login/register attempts from this User, please try again after 15 minutes'
+        msg: 'Too many login/register attempts from this IP, please try again after 15 minutes'
     },
     standardHeaders: true, // Return rate limit info in the `RateLimit-*` headers
     legacyHeaders: false, // Disable the `X-RateLimit-*` headers
@@ -33,7 +33,20 @@ const apiLimiter = rateLimit({
     max: 100,
     message: {
         success: false,
-        message: 'Too many requests from this IP, please try again later'
+        msg: 'Too many requests from this IP, please try again later'
+    },
+    standardHeaders: true,
+    legacyHeaders: false,
+});
+
+// Refresh token limiter - prevent token generation abuse
+// 15 minutes window, 20 refresh attempts max
+const refreshTokenLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 20,
+    message: {
+        success: false,
+        msg: 'Too many token refresh attempts, please try again later'
     },
     standardHeaders: true,
     legacyHeaders: false,
@@ -42,5 +55,6 @@ const apiLimiter = rateLimit({
 module.exports = {
     authLimiter,
     passwordResetLimiter,
-    apiLimiter
+    apiLimiter,
+    refreshTokenLimiter
 };
