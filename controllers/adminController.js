@@ -1011,10 +1011,19 @@ exports.manageFeedback = async (req, res) => {
   try {
     const { reviewId, action, adminNotes } = req.body;
 
-    if (!reviewId || !action) {
+    // Validate reviewId to prevent injection
+    const validReviewId = validateSingleId(reviewId, 'reviewId');
+    if (!validReviewId) {
       return res.status(400).json({
         success: false,
-        message: 'Review ID and action are required'
+        message: 'Invalid reviewId parameter'
+      });
+    }
+
+    if (!action) {
+      return res.status(400).json({
+        success: false,
+        message: 'Action is required'
       });
     }
 
@@ -1026,7 +1035,7 @@ exports.manageFeedback = async (req, res) => {
     }
 
     // Check if review exists
-    const review = await Review.findById(reviewId)
+    const review = await Review.findById(validReviewId)
       .populate('parentId', 'name')
       .populate('tutorId', 'name');
 
@@ -1050,7 +1059,7 @@ exports.manageFeedback = async (req, res) => {
     }
 
     const updatedReview = await Review.findByIdAndUpdate(
-      reviewId,
+      validReviewId,
       updateData,
       { new: true }
     ).populate('parentId', 'name')
