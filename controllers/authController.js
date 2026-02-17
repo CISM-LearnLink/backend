@@ -1,19 +1,20 @@
-const User = require('../models/User');
-const PasswordReset = require('../models/PasswordReset');
-const bcrypt = require('bcryptjs');
-const jwt = require('jsonwebtoken');
-const crypto = require('crypto');
-const { generateOTP, sendOTPEmail } = require('../utils/emailConfig');
+const User = require("../models/User");
+const PasswordReset = require("../models/PasswordReset");
+const bcrypt = require("bcryptjs");
+const jwt = require("jsonwebtoken");
+const crypto = require("crypto");
+const { generateOTP, sendOTPEmail } = require("../utils/emailConfig");
+const { sendSecurityAlert } = require("../utils/alerts");
 
 // Helper function to hash refresh tokens before storage
 const hashToken = (token) => {
-  return crypto.createHash('sha256').update(token).digest('hex');
+  return crypto.createHash("sha256").update(token).digest("hex");
 };
 
 // Use environment variable for JWT_SECRET
 const JWT_SECRET = process.env.JWT_SECRET;
 if (!JWT_SECRET) {
-  console.warn('WARNING: JWT_SECRET is not defined in environment variables.');
+  console.warn("WARNING: JWT_SECRET is not defined in environment variables.");
 }
 
 // Generate Access and Refresh Tokens
@@ -22,14 +23,14 @@ const sendTokenResponse = async (user, statusCode, res) => {
   const accessToken = jwt.sign(
     { user: { id: user.id, role: user.role, tokenVersion: user.tokenVersion } },
     process.env.JWT_SECRET,
-    { expiresIn: '15m' }
+    { expiresIn: "15m" },
   );
 
   // Create Refresh Token (Long-lived: 7d)
   const refreshToken = jwt.sign(
     { user: { id: user.id, tokenVersion: user.tokenVersion } },
     process.env.JWT_SECRET,
-    { expiresIn: '7d' }
+    { expiresIn: "7d" },
   );
 
   // Hash refresh token before storing in database (SECURITY: Prevent token theft on DB breach)
@@ -41,13 +42,13 @@ const sendTokenResponse = async (user, statusCode, res) => {
   const options = {
     expires: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7 days
     httpOnly: true, // Prevent JS access
-    secure: process.env.NODE_ENV === 'production', // Only send over HTTPS in production
-    sameSite: 'strict'
+    secure: process.env.NODE_ENV === "production", // Only send over HTTPS in production
+    sameSite: "strict",
   };
 
   res
     .status(statusCode)
-    .cookie('refreshToken', refreshToken, options)
+    .cookie("refreshToken", refreshToken, options)
     .json({
       success: true,
       token: accessToken,
@@ -55,17 +56,17 @@ const sendTokenResponse = async (user, statusCode, res) => {
         id: user.id,
         name: user.name,
         email: user.email,
-        role: user.role
-      }
+        role: user.role,
+      },
     });
 };
 
 exports.registerUser = async (req, res) => {
   // --- Start of Debugging Logs for Register ---
-  console.log('--- [Auth Controller] Received a request to /register ---');
+  console.log("--- [Auth Controller] Received a request to /register ---");
   console.log(`Timestamp: ${new Date().toISOString()}`);
   // Removed sensitive log: console.log('Request Body:', req.body);
-  console.log('Subjects field type:', typeof req.body.subjects);
+  console.log("Subjects field type:", typeof req.body.subjects);
   // --- End of Debugging Logs ---
 
   const {
@@ -85,17 +86,19 @@ exports.registerUser = async (req, res) => {
     childGrade,
     childPreferredSubjects,
     childLearningGoals,
-    childSpecialNeeds
+    childSpecialNeeds,
   } = req.body;
   try {
     let user = await User.findOne({ email });
     if (user) {
-      console.log(`[Auth Controller] Registration failed: User with email ${email} already exists.`);
-      return res.status(400).json({ msg: 'User already exists' });
+      console.log(
+        `[Auth Controller] Registration failed: User with email ${email} already exists.`,
+      );
+      return res.status(400).json({ msg: "User already exists" });
     }
     // Build user object - Strictly enforce role to be 'parent' or 'tutor'
     // Prevent anyone from registering as 'admin' via public API
-    const safeRole = role === 'tutor' ? 'tutor' : 'parent';
+    const safeRole = role === "tutor" ? "tutor" : "parent";
     const userData = { name, email, password, role: safeRole };
 
     // Handle profile image upload
@@ -103,7 +106,7 @@ exports.registerUser = async (req, res) => {
       userData.profileImage = `/uploads/profiles/${req.file.filename}`;
     }
 
-    if (safeRole === 'tutor') {
+    if (safeRole === "tutor") {
       if (education) userData.education = education;
       if (bio) userData.bio = bio;
       if (location) userData.location = location;
@@ -111,17 +114,21 @@ exports.registerUser = async (req, res) => {
       if (subjects) {
         try {
           // Parse subjects if it's a JSON string (from FormData)
-          const subjectsData = typeof subjects === 'string' ? JSON.parse(subjects) : subjects;
+          const subjectsData =
+            typeof subjects === "string" ? JSON.parse(subjects) : subjects;
           if (Array.isArray(subjectsData)) {
             userData.subjects = subjectsData;
-            console.log('[Auth Controller] Subjects processed successfully:', subjectsData);
+            console.log(
+              "[Auth Controller] Subjects processed successfully:",
+              subjectsData,
+            );
           }
         } catch (err) {
-          console.error('[Auth Controller] Error parsing subjects:', err);
+          console.error("[Auth Controller] Error parsing subjects:", err);
         }
       }
     }
-    if (safeRole === 'parent') {
+    if (safeRole === "parent") {
       if (preferredSubjects && Array.isArray(preferredSubjects)) {
         userData.preferredSubjects = preferredSubjects;
       }
@@ -131,7 +138,7 @@ exports.registerUser = async (req, res) => {
       if (childGrade) userData.childGrade = childGrade;
       if (childPreferredSubjects) {
         let parsedSubjects = childPreferredSubjects;
-        if (typeof childPreferredSubjects === 'string') {
+        if (typeof childPreferredSubjects === "string") {
           try {
             parsedSubjects = JSON.parse(childPreferredSubjects);
           } catch (e) {
@@ -150,19 +157,26 @@ exports.registerUser = async (req, res) => {
     const salt = await bcrypt.genSalt(10);
     user.password = await bcrypt.hash(password, salt);
     await user.save();
-    console.log(`[Auth Controller] Registration successful: New user created with ID ${user.id}`);
+    console.log(
+      `[Auth Controller] Registration successful: New user created with ID ${user.id}`,
+    );
 
-    const payload = { user: { id: user.id, role: user.role, tokenVersion: user.tokenVersion } };
+    const payload = {
+      user: { id: user.id, role: user.role, tokenVersion: user.tokenVersion },
+    };
     await sendTokenResponse(user, 201, res);
   } catch (err) {
-    console.error('[Auth Controller] CRITICAL ERROR during registration:', err.message);
-    res.status(500).send('Server error');
+    console.error(
+      "[Auth Controller] CRITICAL ERROR during registration:",
+      err.message,
+    );
+    res.status(500).send("Server error");
   }
 };
 
 exports.loginUser = async (req, res) => {
   // --- Start of Debugging Logs for Login ---
-  console.log('--- [Auth Controller] Received a request to /login ---');
+  console.log("--- [Auth Controller] Received a request to /login ---");
   console.log(`Timestamp: ${new Date().toISOString()}`);
   // Removed sensitive log: console.log('Request Body:', req.body);
   // --- End of Debugging Logs ---
@@ -170,39 +184,55 @@ exports.loginUser = async (req, res) => {
   const { email, password, role } = req.body;
   try {
     if (!email) {
-      return res.status(400).json({ msg: 'Email is required' });
+      return res.status(400).json({ msg: "Email is required" });
     }
     if (!password) {
-      return res.status(400).json({ msg: 'Password is required' });
+      return res.status(400).json({ msg: "Password is required" });
     }
     const user = await User.findOne({ email });
     if (!user) {
-      console.log(`[Auth Controller] Login failed: No user found with email ${email}.`);
-      return res.status(400).json({ msg: 'Invalid Credentials' });
+      console.log(
+        `[Auth Controller] Login failed: No user found with email ${email}.`,
+      );
+      return res.status(400).json({ msg: "Invalid Credentials" });
     }
 
     // Check if account is deactivated
-    if (user.status === 'deactivated') {
-      console.log(`[Auth Controller] Login failed: Account ${email} is deactivated.`);
-      return res.status(400).json({ msg: 'Account has been deactivated. Please contact support.' });
+    if (user.status === "deactivated") {
+      console.log(
+        `[Auth Controller] Login failed: Account ${email} is deactivated.`,
+      );
+      return res
+        .status(400)
+        .json({ msg: "Account has been deactivated. Please contact support." });
     }
 
     // Check if user has admin role - if so, allow login regardless of requested role
-    if (user.role === 'admin') {
-      console.log(`[Auth Controller] Admin user ${email} logging in. Admin access granted.`);
+    if (user.role === "admin") {
+      console.log(
+        `[Auth Controller] Admin user ${email} logging in. Admin access granted.`,
+      );
     } else {
       // Validate role if provided and user is not admin
       if (role && user.role !== role) {
-        console.log(`[Auth Controller] Login failed: Role mismatch for user ${email}. Expected ${role}, found ${user.role}.`);
-        return res.status(400).json({ msg: 'Invalid Credentials' });
+        console.log(
+          `[Auth Controller] Login failed: Role mismatch for user ${email}. Expected ${role}, found ${user.role}.`,
+        );
+        return res.status(400).json({ msg: "Invalid Credentials" });
       }
     }
 
     // Check if account is locked
     if (user.lockoutUntil && user.lockoutUntil > Date.now()) {
       const remainingTime = Math.ceil((user.lockoutUntil - Date.now()) / 60000);
-      console.log(`[Auth Controller] Login failed: Account ${email} is temporarily locked.`);
-      return res.status(403).json({ msg: `Account is temporarily locked. Please try again in ${remainingTime} minutes.` });
+      console.log(
+        `[Auth Controller] Login failed: Account ${email} is temporarily locked.`,
+      );
+      return res
+        .status(403)
+        .json({
+          msg: `Account is temporarily locked. Please try again in ${remainingTime} minutes.`,
+        });
     }
 
     // If lockout has expired, reset failed attempts counter
@@ -210,7 +240,9 @@ exports.loginUser = async (req, res) => {
       user.failedLoginAttempts = 0;
       user.lockoutUntil = null;
       await user.save();
-      console.log(`[Auth Controller] Lockout expired for ${email}, failed attempts reset.`);
+      console.log(
+        `[Auth Controller] Lockout expired for ${email}, failed attempts reset.`,
+      );
     }
 
     const isMatch = await bcrypt.compare(password, user.password);
@@ -223,17 +255,36 @@ exports.loginUser = async (req, res) => {
         user.lockoutUntil = Date.now() + 15 * 60 * 1000; // 15 minutes lock
         await user.save();
 
-        const remainingTime = Math.ceil((user.lockoutUntil - Date.now()) / 60000);
-        console.log(`[Auth Controller] Account ${email} locked due to too many failed attempts.`);
+        const remainingTime = Math.ceil(
+          (user.lockoutUntil - Date.now()) / 60000,
+        );
+
+        console.log(
+          `[Auth Controller] Account ${email} locked due to too many failed attempts.`,
+        );
+
+        // Security alerts trigger
+        await sendSecurityAlert(
+          "SECURITY ALERT: Account Locked Due to Failed Logins",
+          `
+    User Email: ${email}
+    Time: ${new Date().toISOString()}
+    Failed Attempts: ${user.failedLoginAttempts}
+    Lock Duration: 15 minutes
+    `,
+        );
+
         return res.status(403).json({
-          msg: `Account locked due to multiple failed login attempts. Please try again in ${remainingTime} minutes.`
+          msg: `Account locked due to multiple failed login attempts. Please try again in ${remainingTime} minutes.`,
         });
       }
 
       await user.save();
 
-      console.log(`[Auth Controller] Login failed: Password does not match for user ${email}. Attempts: ${user.failedLoginAttempts}`);
-      return res.status(400).json({ msg: 'Invalid Credentials' });
+      console.log(
+        `[Auth Controller] Login failed: Password does not match for user ${email}. Attempts: ${user.failedLoginAttempts}`,
+      );
+      return res.status(400).json({ msg: "Invalid Credentials" });
     }
 
     // Reset failed attempts and lockout on successful login
@@ -243,31 +294,45 @@ exports.loginUser = async (req, res) => {
       await user.save();
     }
 
-    console.log(`[Auth Controller] Login successful: User ${email} authenticated with role ${user.role}.`);
-    const payload = { user: { id: user.id, role: user.role, tokenVersion: user.tokenVersion } };
+    console.log(
+      `[Auth Controller] Login successful: User ${email} authenticated with role ${user.role}.`,
+    );
+    const payload = {
+      user: { id: user.id, role: user.role, tokenVersion: user.tokenVersion },
+    };
     await sendTokenResponse(user, 200, res);
   } catch (err) {
-    console.error('[Auth Controller] CRITICAL ERROR during login:', err.message);
-    res.status(500).send('Server error');
+    console.error(
+      "[Auth Controller] CRITICAL ERROR during login:",
+      err.message,
+    );
+    res.status(500).send("Server error");
   }
 };
 
 // Get current user profile
 exports.getMe = async (req, res) => {
   try {
-    let user = await User.findById(req.user.id).select('-password');
-    if (!user) return res.status(404).json({ success: false, message: 'User not found' });
+    let user = await User.findById(req.user.id).select("-password");
+    if (!user)
+      return res
+        .status(404)
+        .json({ success: false, message: "User not found" });
 
     // Populate childPreferredSubjects if user is a parent
-    if (user.role === 'parent' && user.childPreferredSubjects && user.childPreferredSubjects.length > 0) {
+    if (
+      user.role === "parent" &&
+      user.childPreferredSubjects &&
+      user.childPreferredSubjects.length > 0
+    ) {
       user = await User.findById(req.user.id)
-        .select('-password')
-        .populate('childPreferredSubjects', 'name _id');
+        .select("-password")
+        .populate("childPreferredSubjects", "name _id");
     }
 
     res.json({ success: true, user });
   } catch (err) {
-    res.status(500).json({ success: false, message: 'Server error' });
+    res.status(500).json({ success: false, message: "Server error" });
   }
 };
 
@@ -283,10 +348,13 @@ exports.updateMe = async (req, res) => {
       childGrade,
       childPreferredSubjects,
       childLearningGoals,
-      childSpecialNeeds
+      childSpecialNeeds,
     } = req.body;
     const user = await User.findById(req.user.id);
-    if (!user) return res.status(404).json({ success: false, message: 'User not found' });
+    if (!user)
+      return res
+        .status(404)
+        .json({ success: false, message: "User not found" });
 
     // Update basic fields
     if (name) user.name = name;
@@ -298,13 +366,13 @@ exports.updateMe = async (req, res) => {
     }
 
     // Update child details if user is a parent
-    if (user.role === 'parent') {
+    if (user.role === "parent") {
       if (childName !== undefined) user.childName = childName;
       if (childAge !== undefined) user.childAge = childAge;
       if (childGrade !== undefined) user.childGrade = childGrade;
       if (childPreferredSubjects) {
         let parsedSubjects = childPreferredSubjects;
-        if (typeof childPreferredSubjects === 'string') {
+        if (typeof childPreferredSubjects === "string") {
           try {
             parsedSubjects = JSON.parse(childPreferredSubjects);
           } catch (e) {
@@ -315,21 +383,23 @@ exports.updateMe = async (req, res) => {
           user.childPreferredSubjects = parsedSubjects;
         }
       }
-      if (childLearningGoals !== undefined) user.childLearningGoals = childLearningGoals;
-      if (childSpecialNeeds !== undefined) user.childSpecialNeeds = childSpecialNeeds;
+      if (childLearningGoals !== undefined)
+        user.childLearningGoals = childLearningGoals;
+      if (childSpecialNeeds !== undefined)
+        user.childSpecialNeeds = childSpecialNeeds;
     }
 
     await user.save();
     res.json({ success: true });
   } catch (err) {
-    res.status(500).json({ success: false, message: 'Server error' });
+    res.status(500).json({ success: false, message: "Server error" });
   }
 };
 
 // Request password reset (send OTP)
 exports.requestPasswordReset = async (req, res) => {
-  console.log('--- [Auth Controller] Received password reset request ---');
-  console.log('Request Body:', req.body);
+  console.log("--- [Auth Controller] Received password reset request ---");
+  console.log("Request Body:", req.body);
 
   const { email } = req.body;
 
@@ -337,8 +407,12 @@ exports.requestPasswordReset = async (req, res) => {
     // Check if user exists
     const user = await User.findOne({ email });
     if (!user) {
-      console.log(`[Auth Controller] Password reset failed: No user found with email ${email}`);
-      return res.status(404).json({ msg: 'No account found with this email address' });
+      console.log(
+        `[Auth Controller] Password reset failed: No user found with email ${email}`,
+      );
+      return res
+        .status(404)
+        .json({ msg: "No account found with this email address" });
     }
 
     // Generate OTP
@@ -352,7 +426,7 @@ exports.requestPasswordReset = async (req, res) => {
     const passwordReset = new PasswordReset({
       email,
       otp,
-      expiresAt
+      expiresAt,
     });
     await passwordReset.save();
 
@@ -360,21 +434,28 @@ exports.requestPasswordReset = async (req, res) => {
     const emailSent = await sendOTPEmail(email, otp);
     if (!emailSent) {
       console.log(`[Auth Controller] Failed to send OTP email to ${email}`);
-      return res.status(500).json({ msg: 'Failed to send reset email. Please try again.' });
+      return res
+        .status(500)
+        .json({ msg: "Failed to send reset email. Please try again." });
     }
 
-    console.log(`[Auth Controller] Password reset OTP sent successfully to ${email}`);
-    res.json({ msg: 'Password reset OTP sent to your email' });
+    console.log(
+      `[Auth Controller] Password reset OTP sent successfully to ${email}`,
+    );
+    res.json({ msg: "Password reset OTP sent to your email" });
   } catch (err) {
-    console.error('[Auth Controller] Error in requestPasswordReset:', err.message);
-    res.status(500).json({ msg: 'Server error' });
+    console.error(
+      "[Auth Controller] Error in requestPasswordReset:",
+      err.message,
+    );
+    res.status(500).json({ msg: "Server error" });
   }
 };
 
 // Verify OTP and reset password
 exports.resetPassword = async (req, res) => {
-  console.log('--- [Auth Controller] Received password reset verification ---');
-  console.log('Request Body:', req.body);
+  console.log("--- [Auth Controller] Received password reset verification ---");
+  console.log("Request Body:", req.body);
 
   const { email, otp, newPassword } = req.body;
 
@@ -383,19 +464,21 @@ exports.resetPassword = async (req, res) => {
     const resetToken = await PasswordReset.findOne({
       email,
       otp,
-      expiresAt: { $gt: new Date() }
+      expiresAt: { $gt: new Date() },
     });
 
     if (!resetToken) {
       console.log(`[Auth Controller] Invalid or expired OTP for ${email}`);
-      return res.status(400).json({ msg: 'Invalid or expired OTP' });
+      return res.status(400).json({ msg: "Invalid or expired OTP" });
     }
 
     // Find user
     const user = await User.findOne({ email });
     if (!user) {
-      console.log(`[Auth Controller] User not found for password reset: ${email}`);
-      return res.status(404).json({ msg: 'User not found' });
+      console.log(
+        `[Auth Controller] User not found for password reset: ${email}`,
+      );
+      return res.status(404).json({ msg: "User not found" });
     }
 
     // Hash new password
@@ -409,10 +492,10 @@ exports.resetPassword = async (req, res) => {
     await PasswordReset.deleteOne({ _id: resetToken._id });
 
     console.log(`[Auth Controller] Password reset successful for ${email}`);
-    res.json({ msg: 'Password reset successful' });
+    res.json({ msg: "Password reset successful" });
   } catch (err) {
-    console.error('[Auth Controller] Error in resetPassword:', err.message);
-    res.status(500).json({ msg: 'Server error' });
+    console.error("[Auth Controller] Error in resetPassword:", err.message);
+    res.status(500).json({ msg: "Server error" });
   }
 };
 
@@ -422,7 +505,9 @@ exports.refreshToken = async (req, res) => {
     const refreshToken = req.cookies.refreshToken;
 
     if (!refreshToken) {
-      return res.status(401).json({ success: false, message: 'No refresh token provided' });
+      return res
+        .status(401)
+        .json({ success: false, message: "No refresh token provided" });
     }
 
     // Verify token
@@ -432,26 +517,36 @@ exports.refreshToken = async (req, res) => {
     const user = await User.findById(decoded.user.id);
 
     if (!user) {
-      return res.status(401).json({ success: false, message: 'User not found' });
+      return res
+        .status(401)
+        .json({ success: false, message: "User not found" });
     }
 
     // Hash the incoming token and compare with stored hash (SECURITY: Tokens are hashed in DB)
     const hashedIncomingToken = hashToken(refreshToken);
     if (user.refreshToken !== hashedIncomingToken) {
-      return res.status(401).json({ success: false, message: 'Invalid refresh token' });
+      return res
+        .status(401)
+        .json({ success: false, message: "Invalid refresh token" });
     }
 
     // Check token version (for password reset invalidation)
     if (user.tokenVersion !== decoded.user.tokenVersion) {
-      return res.status(401).json({ success: false, message: 'Token is invalid (password changed)' });
+      return res
+        .status(401)
+        .json({
+          success: false,
+          message: "Token is invalid (password changed)",
+        });
     }
 
     // Issue new tokens
     await sendTokenResponse(user, 200, res);
-
   } catch (err) {
-    console.error('Refresh Token Error:', err.message);
-    return res.status(401).json({ success: false, message: 'Invalid refresh token' });
+    console.error("Refresh Token Error:", err.message);
+    return res
+      .status(401)
+      .json({ success: false, message: "Invalid refresh token" });
   }
 };
 
@@ -459,9 +554,9 @@ exports.refreshToken = async (req, res) => {
 exports.logoutUser = async (req, res) => {
   try {
     // Clear cookie
-    res.cookie('refreshToken', 'none', {
+    res.cookie("refreshToken", "none", {
       expires: new Date(Date.now() + 10 * 1000),
-      httpOnly: true
+      httpOnly: true,
     });
 
     const refreshToken = req.cookies.refreshToken;
@@ -471,19 +566,21 @@ exports.logoutUser = async (req, res) => {
         const user = await User.findById(decoded.user.id);
         if (user) {
           // SECURITY: Clear refresh token AND increment version to invalidate all access tokens
-          user.refreshToken = '';
+          user.refreshToken = "";
           user.tokenVersion = (user.tokenVersion || 0) + 1;
           await user.save();
-          console.log(`[Auth Controller] User ${user.email} logged out. Token version incremented to ${user.tokenVersion}.`);
+          console.log(
+            `[Auth Controller] User ${user.email} logged out. Token version incremented to ${user.tokenVersion}.`,
+          );
         }
       } catch (e) {
         // Ignore verification errors on logout
       }
     }
 
-    res.status(200).json({ success: true, message: 'Logged out successfully' });
+    res.status(200).json({ success: true, message: "Logged out successfully" });
   } catch (err) {
-    console.error('[Auth Controller] Logout error:', err.message);
-    res.status(500).json({ success: false, message: 'Logout failed' });
+    console.error("[Auth Controller] Logout error:", err.message);
+    res.status(500).json({ success: false, message: "Logout failed" });
   }
 };
