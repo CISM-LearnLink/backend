@@ -1011,19 +1011,10 @@ exports.manageFeedback = async (req, res) => {
   try {
     const { reviewId, action, adminNotes } = req.body;
 
-    // Validate reviewId to prevent injection
-    const validReviewId = validateSingleId(reviewId, 'reviewId');
-    if (!validReviewId) {
+    if (!reviewId || !action) {
       return res.status(400).json({
         success: false,
-        message: 'Invalid reviewId parameter'
-      });
-    }
-
-    if (!action) {
-      return res.status(400).json({
-        success: false,
-        message: 'Action is required'
+        message: 'Review ID and action are required'
       });
     }
 
@@ -1035,7 +1026,7 @@ exports.manageFeedback = async (req, res) => {
     }
 
     // Check if review exists
-    const review = await Review.findById(validReviewId)
+    const review = await Review.findById(reviewId)
       .populate('parentId', 'name')
       .populate('tutorId', 'name');
 
@@ -1059,7 +1050,7 @@ exports.manageFeedback = async (req, res) => {
     }
 
     const updatedReview = await Review.findByIdAndUpdate(
-      validReviewId,
+      reviewId,
       updateData,
       { new: true }
     ).populate('parentId', 'name')
@@ -1487,17 +1478,8 @@ exports.deleteSubject = async (req, res) => {
   try {
     const { subjectId } = req.params;
 
-    // Validate subjectId to prevent injection
-    const validSubjectId = validateSingleId(subjectId, 'subjectId');
-    if (!validSubjectId) {
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid subjectId parameter'
-      });
-    }
-
     // Check if subject exists
-    const existingSubject = await Subject.findById(validSubjectId);
+    const existingSubject = await Subject.findById(subjectId);
     if (!existingSubject) {
       return res.status(404).json({
         success: false,
@@ -1507,7 +1489,7 @@ exports.deleteSubject = async (req, res) => {
 
     // Check if subject is being used by any tutors
     const tutorsUsingSubject = await User.countDocuments({
-      'subjects.subject': validSubjectId
+      'subjects.subject': subjectId
     });
 
     if (tutorsUsingSubject > 0) {
@@ -1519,7 +1501,7 @@ exports.deleteSubject = async (req, res) => {
 
     // Check if subject is being used in any bookings
     const bookingsUsingSubject = await Booking.countDocuments({
-      subject: validSubjectId
+      subject: subjectId
     });
 
     if (bookingsUsingSubject > 0) {
@@ -1529,7 +1511,7 @@ exports.deleteSubject = async (req, res) => {
       });
     }
 
-    await Subject.findByIdAndDelete(validSubjectId);
+    await Subject.findByIdAndDelete(subjectId);
 
     res.json({
       success: true,
