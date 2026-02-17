@@ -7,12 +7,12 @@ const verifyBookingOwnership = async (req, res, next) => {
 
     let booking = null;
 
-    // 🔐 Admin: unrestricted access
+    // Admin: unrestricted access
     if (role === 'admin') {
       booking = await Booking.findById(bookingId);
     }
 
-    // 🔐 Student / Parent: own bookings only
+    // Student / Parent: own bookings only
     else if (role === 'user') {
       booking = await Booking.findOne({
         _id: bookingId,
@@ -20,7 +20,7 @@ const verifyBookingOwnership = async (req, res, next) => {
       });
     }
 
-    // 🔐 Tutor: assigned bookings only
+    // Tutor: assigned bookings only
     else if (role === 'tutor') {
       booking = await Booking.findOne({
         _id: bookingId,
@@ -28,7 +28,7 @@ const verifyBookingOwnership = async (req, res, next) => {
       });
     }
 
-    // 🚫 Generic denial (prevents ID enumeration)
+    // Generic denial (prevents ID enumeration)
     if (!booking) {
       return res.status(403).json({ message: 'Access denied' });
     }
