@@ -1,14 +1,17 @@
 const mongoose = require('mongoose');
+const dns = require('dns');
+
+// Fix for Node.js 18+ DNS resolution issues with MongoDB Atlas
+if (dns.setDefaultResultOrder) {
+  dns.setDefaultResultOrder('ipv4first');
+}
 
 const connectDB = async () => {
   try {
-    await mongoose.connect(process.env.MONGO_URI, {
-      useNewUrlParser: true,
-      useUnifiedTopology: true,
-    });
+    await mongoose.connect(process.env.MONGO_URI);
     console.log('MongoDB Connected');
   } catch (err) {
-    console.error(err.message);
+    console.error('MongoDB Connection Error:', err.message);
     process.exit(1);
   }
 };

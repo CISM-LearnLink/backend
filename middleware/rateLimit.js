@@ -52,9 +52,23 @@ const refreshTokenLimiter = rateLimit({
     legacyHeaders: false,
 });
 
+// Global limiter for all requests (even static files) - very generous
+// 15 minutes window, 1000 requests max
+const globalLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 1000,
+    message: {
+        success: false,
+        msg: 'Too many requests from this IP'
+    },
+    standardHeaders: true,
+    legacyHeaders: false,
+});
+
 module.exports = {
     authLimiter,
     passwordResetLimiter,
     apiLimiter,
-    refreshTokenLimiter
+    refreshTokenLimiter,
+    globalLimiter
 };
