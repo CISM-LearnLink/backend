@@ -17,6 +17,26 @@ const escapeRegex = (str) => {
 
 const mongoose = require('mongoose');
 
+// Validate and convert array of IDs to ObjectIds to prevent NoSQL injection
+const validateAndConvertIds = (ids) => {
+  if (!Array.isArray(ids) || ids.length === 0) {
+    return null;
+  }
+  const validIds = ids.filter(id => 
+    typeof id === 'string' && mongoose.Types.ObjectId.isValid(id)
+  ).map(id => mongoose.Types.ObjectId(id));
+  
+  return validIds.length === ids.length ? validIds : null;
+};
+
+// Validate single ID parameter to prevent NoSQL injection
+const validateSingleId = (id, paramName = 'ID') => {
+  if (!id || typeof id !== 'string' || !mongoose.Types.ObjectId.isValid(id)) {
+    return null;
+  }
+  return mongoose.Types.ObjectId(id);
+};
+
 // Get all users with filtering and pagination
 exports.getAllUsers = async (req, res) => {
   try {
@@ -211,6 +231,16 @@ exports.verifyTutor = async (req, res) => {
     const { tutorId } = req.params;
     const { action, reason, adminNotes } = req.body;
 
+    // Validate tutorId to prevent injection
+    if (!tutorId || typeof tutorId !== 'string' || !mongoose.Types.ObjectId.isValid(tutorId)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid tutorId parameter'
+      });
+    }
+
+    const tutorObjectId = mongoose.Types.ObjectId(tutorId);
+
     if (!action || !['approve', 'reject'].includes(action)) {
       return res.status(400).json({
         success: false,
@@ -219,7 +249,7 @@ exports.verifyTutor = async (req, res) => {
     }
 
     // Check if tutor exists
-    const tutor = await User.findById(tutorId);
+    const tutor = await User.findById(tutorObjectId);
     if (!tutor || tutor.role !== 'tutor') {
       return res.status(404).json({
         success: false,
@@ -240,13 +270,13 @@ exports.verifyTutor = async (req, res) => {
     }
 
     const updatedTutor = await User.findByIdAndUpdate(
-      tutorId,
+      tutorObjectId,
       updateData,
       { new: true }
     ).select('-password');
 
     // Log verification action
-    console.log(`Tutor ${tutorId} ${action}ed by admin. Reason: ${reason || 'N/A'}`);
+    console.log(`Tutor ${tutorObjectId} ${action}ed by admin. Reason: ${reason || 'N/A'}`);
 
     res.json({
       success: true,
@@ -276,6 +306,15 @@ exports.bulkVerifyTutors = async (req, res) => {
       });
     }
 
+    // Validate and convert all IDs to ObjectIds to prevent NoSQL injection
+    const validatedTutorIds = validateAndConvertIds(tutorIds);
+    if (!validatedTutorIds) {
+      return res.status(400).json({
+        success: false,
+        message: 'One or more Tutor IDs are invalid'
+      });
+    }
+
     if (!action || !['approve', 'reject'].includes(action)) {
       return res.status(400).json({
         success: false,
@@ -285,11 +324,11 @@ exports.bulkVerifyTutors = async (req, res) => {
 
     // Verify all tutors exist and are actually tutors
     const tutors = await User.find({
-      _id: { $in: tutorIds },
+      _id: { $in: validatedTutorIds },
       role: 'tutor'
     });
 
-    if (tutors.length !== tutorIds.length) {
+    if (tutors.length !== validatedTutorIds.length) {
       return res.status(400).json({
         success: false,
         message: 'Some tutor IDs are invalid or not tutors'
@@ -309,7 +348,7 @@ exports.bulkVerifyTutors = async (req, res) => {
     }
 
     const result = await User.updateMany(
-      { _id: { $in: tutorIds } },
+      { _id: { $in: validatedTutorIds } },
       updateData
     );
 
@@ -544,15 +583,25 @@ exports.handleDispute = async (req, res) => {
   try {
     const { bookingId, disputeType, description, resolution, adminNotes } = req.body;
 
-    if (!bookingId || !disputeType || !description) {
+    // Validate bookingId to prevent injection
+    if (!bookingId || typeof bookingId !== 'string' || !mongoose.Types.ObjectId.isValid(bookingId)) {
       return res.status(400).json({
         success: false,
-        message: 'Booking ID, dispute type, and description are required'
+        message: 'Invalid bookingId parameter'
       });
     }
 
+    if (!disputeType || !description) {
+      return res.status(400).json({
+        success: false,
+        message: 'Dispute type and description are required'
+      });
+    }
+
+    const bookingObjectId = mongoose.Types.ObjectId(bookingId);
+
     // Check if booking exists
-    const booking = await Booking.findById(bookingId)
+    const booking = await Booking.findById(bookingObjectId)
       .populate('parentId', 'name email')
       .populate('tutorId', 'name email');
 
@@ -565,7 +614,7 @@ exports.handleDispute = async (req, res) => {
 
     // Create dispute record (you might want to create a separate Dispute model)
     const dispute = {
-      bookingId,
+      bookingId: bookingObjectId,
       disputeType,
       description,
       resolution,
@@ -577,7 +626,7 @@ exports.handleDispute = async (req, res) => {
 
     // Update booking with dispute information
     const updatedBooking = await Booking.findByIdAndUpdate(
-      bookingId,
+      bookingObjectId,
       {
         dispute: dispute,
         status: resolution === 'refund' ? 'cancelled' : booking.status
@@ -587,7 +636,7 @@ exports.handleDispute = async (req, res) => {
       .populate('tutorId', 'name email');
 
     // Log dispute handling
-    console.log(`Dispute handled for booking ${bookingId}: ${disputeType} - ${resolution || 'Pending'}`);
+    console.log(`Dispute handled for booking ${bookingObjectId}: ${disputeType} - ${resolution || 'Pending'}`);
 
     res.json({
       success: true,
@@ -698,7 +747,16 @@ exports.getDisputeDetails = async (req, res) => {
   try {
     const { disputeId } = req.params;
 
-    const dispute = await Dispute.findById(disputeId)
+    // Validate disputeId to prevent injection
+    const validDisputeId = validateSingleId(disputeId, 'disputeId');
+    if (!validDisputeId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid disputeId parameter'
+      });
+    }
+
+    const dispute = await Dispute.findById(validDisputeId)
       .populate('parentId', 'name email')
       .populate('tutorId', 'name email')
       .populate('bookingId', 'sessionTime subject')
@@ -734,6 +792,15 @@ exports.resolveDispute = async (req, res) => {
     const { disputeId } = req.params;
     const { resolution, resolutionType, adminNotes } = req.body;
 
+    // Validate disputeId to prevent injection
+    const validDisputeId = validateSingleId(disputeId, 'disputeId');
+    if (!validDisputeId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid disputeId parameter'
+      });
+    }
+
     if (!resolution || !resolutionType) {
       return res.status(400).json({
         success: false,
@@ -741,7 +808,7 @@ exports.resolveDispute = async (req, res) => {
       });
     }
 
-    const dispute = await Dispute.findById(disputeId);
+    const dispute = await Dispute.findById(validDisputeId);
     if (!dispute) {
       return res.status(404).json({
         success: false,
@@ -753,7 +820,7 @@ exports.resolveDispute = async (req, res) => {
     await dispute.resolve(resolution, resolutionType, adminNotes, req.user.id);
 
     // Populate the updated dispute
-    const updatedDispute = await Dispute.findById(disputeId)
+    const updatedDispute = await Dispute.findById(validDisputeId)
       .populate('parentId', 'name email')
       .populate('tutorId', 'name email')
       .populate('bookingId', 'sessionTime subject')
@@ -782,6 +849,15 @@ exports.addDisputeMessage = async (req, res) => {
     const { disputeId } = req.params;
     const { message, isInternal = false } = req.body;
 
+    // Validate disputeId to prevent injection
+    const validDisputeId = validateSingleId(disputeId, 'disputeId');
+    if (!validDisputeId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid disputeId parameter'
+      });
+    }
+
     if (!message) {
       return res.status(400).json({
         success: false,
@@ -789,7 +865,7 @@ exports.addDisputeMessage = async (req, res) => {
       });
     }
 
-    const dispute = await Dispute.findById(disputeId);
+    const dispute = await Dispute.findById(validDisputeId);
     if (!dispute) {
       return res.status(404).json({
         success: false,
@@ -827,6 +903,15 @@ exports.updateDisputePriority = async (req, res) => {
     const { disputeId } = req.params;
     const { priority } = req.body;
 
+    // Validate disputeId to prevent injection
+    const validDisputeId = validateSingleId(disputeId, 'disputeId');
+    if (!validDisputeId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid disputeId parameter'
+      });
+    }
+
     if (!priority || !['low', 'medium', 'high', 'urgent'].includes(priority)) {
       return res.status(400).json({
         success: false,
@@ -835,7 +920,7 @@ exports.updateDisputePriority = async (req, res) => {
     }
 
     const dispute = await Dispute.findByIdAndUpdate(
-      disputeId,
+      validDisputeId,
       { priority },
       { new: true }
     ).populate('parentId', 'name email')
@@ -872,7 +957,16 @@ exports.dismissDispute = async (req, res) => {
     const { disputeId } = req.params;
     const { adminNotes } = req.body;
 
-    const dispute = await Dispute.findById(disputeId);
+    // Validate disputeId to prevent injection
+    const validDisputeId = validateSingleId(disputeId, 'disputeId');
+    if (!validDisputeId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid disputeId parameter'
+      });
+    }
+
+    const dispute = await Dispute.findById(validDisputeId);
     if (!dispute) {
       return res.status(404).json({
         success: false,
@@ -889,7 +983,7 @@ exports.dismissDispute = async (req, res) => {
     // Add admin message about dismissal
     await dispute.addMessage(req.user.id, 'admin', `Dispute dismissed. ${adminNotes || ''}`, true);
 
-    const updatedDispute = await Dispute.findById(disputeId)
+    const updatedDispute = await Dispute.findById(validDisputeId)
       .populate('parentId', 'name email')
       .populate('tutorId', 'name email')
       .populate('bookingId', 'sessionTime subject')
@@ -917,10 +1011,19 @@ exports.manageFeedback = async (req, res) => {
   try {
     const { reviewId, action, adminNotes } = req.body;
 
-    if (!reviewId || !action) {
+    // Validate reviewId to prevent injection
+    const validReviewId = validateSingleId(reviewId, 'reviewId');
+    if (!validReviewId) {
       return res.status(400).json({
         success: false,
-        message: 'Review ID and action are required'
+        message: 'Invalid reviewId parameter'
+      });
+    }
+
+    if (!action) {
+      return res.status(400).json({
+        success: false,
+        message: 'Action is required'
       });
     }
 
@@ -932,7 +1035,7 @@ exports.manageFeedback = async (req, res) => {
     }
 
     // Check if review exists
-    const review = await Review.findById(reviewId)
+    const review = await Review.findById(validReviewId)
       .populate('parentId', 'name')
       .populate('tutorId', 'name');
 
@@ -956,7 +1059,7 @@ exports.manageFeedback = async (req, res) => {
     }
 
     const updatedReview = await Review.findByIdAndUpdate(
-      reviewId,
+      validReviewId,
       updateData,
       { new: true }
     ).populate('parentId', 'name')
@@ -1162,6 +1265,15 @@ exports.updateUserStatus = async (req, res) => {
     const { userId } = req.params;
     const { action, reason, adminNotes } = req.body;
 
+    // Validate userId to prevent injection
+    const validUserId = validateSingleId(userId, 'userId');
+    if (!validUserId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid userId parameter'
+      });
+    }
+
     if (!action || !['activate', 'deactivate'].includes(action)) {
       return res.status(400).json({
         success: false,
@@ -1170,7 +1282,7 @@ exports.updateUserStatus = async (req, res) => {
     }
 
     // Check if user exists
-    const user = await User.findById(userId);
+    const user = await User.findById(validUserId);
     if (!user) {
       return res.status(404).json({
         success: false,
@@ -1196,13 +1308,13 @@ exports.updateUserStatus = async (req, res) => {
     }
 
     const updatedUser = await User.findByIdAndUpdate(
-      userId,
+      validUserId,
       updateData,
       { new: true }
     ).select('-password').populate('subjects.subject', 'name');
 
     // Log status update
-    console.log(`User ${userId} ${action}d by admin. Reason: ${reason || 'N/A'}`);
+    console.log(`User ${validUserId} ${action}d by admin. Reason: ${reason || 'N/A'}`);
 
     res.json({
       success: true,
@@ -1298,6 +1410,15 @@ exports.updateSubject = async (req, res) => {
     const { subjectId } = req.params;
     const { name } = req.body;
 
+    // Validate subjectId to prevent injection
+    const validSubjectId = validateSingleId(subjectId, 'subjectId');
+    if (!validSubjectId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid subjectId parameter'
+      });
+    }
+
     console.log('Update subject request:', { subjectId, name });
 
     if (!name) {
@@ -1308,9 +1429,9 @@ exports.updateSubject = async (req, res) => {
     }
 
     // Check if subject exists
-    const existingSubject = await Subject.findById(subjectId);
+    const existingSubject = await Subject.findById(validSubjectId);
     if (!existingSubject) {
-      console.log('Subject not found:', subjectId);
+      console.log('Subject not found:', validSubjectId);
       return res.status(404).json({
         success: false,
         message: 'Subject not found'
@@ -1320,7 +1441,7 @@ exports.updateSubject = async (req, res) => {
     // Check if new name conflicts with existing subject (excluding current subject)
     const nameConflict = await Subject.findOne({
       name: escapeRegex(name),
-      _id: { $ne: subjectId }
+      _id: { $ne: validSubjectId }
     });
 
     if (nameConflict) {
@@ -1338,7 +1459,7 @@ exports.updateSubject = async (req, res) => {
     }
 
     const updatedSubject = await Subject.findByIdAndUpdate(
-      subjectId,
+      validSubjectId,
       { name, imageUrl },
       { new: true }
     );
@@ -1366,8 +1487,17 @@ exports.deleteSubject = async (req, res) => {
   try {
     const { subjectId } = req.params;
 
+    // Validate subjectId to prevent injection
+    const validSubjectId = validateSingleId(subjectId, 'subjectId');
+    if (!validSubjectId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid subjectId parameter'
+      });
+    }
+
     // Check if subject exists
-    const existingSubject = await Subject.findById(subjectId);
+    const existingSubject = await Subject.findById(validSubjectId);
     if (!existingSubject) {
       return res.status(404).json({
         success: false,
@@ -1377,7 +1507,7 @@ exports.deleteSubject = async (req, res) => {
 
     // Check if subject is being used by any tutors
     const tutorsUsingSubject = await User.countDocuments({
-      'subjects.subject': subjectId
+      'subjects.subject': validSubjectId
     });
 
     if (tutorsUsingSubject > 0) {
@@ -1389,7 +1519,7 @@ exports.deleteSubject = async (req, res) => {
 
     // Check if subject is being used in any bookings
     const bookingsUsingSubject = await Booking.countDocuments({
-      subject: subjectId
+      subject: validSubjectId
     });
 
     if (bookingsUsingSubject > 0) {
@@ -1399,7 +1529,7 @@ exports.deleteSubject = async (req, res) => {
       });
     }
 
-    await Subject.findByIdAndDelete(subjectId);
+    await Subject.findByIdAndDelete(validSubjectId);
 
     res.json({
       success: true,
