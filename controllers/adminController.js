@@ -9,9 +9,18 @@ const Waitlist = require('../models/Waitlist');
 const Dispute = require('../models/Dispute');
 const Subject = require('../models/Subject');
 
+// Security: Escape special regex characters to prevent NoSQL injection
+const escapeRegex = (str) => {
+  if (typeof str !== 'string') return '';
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+};
+
+const mongoose = require('mongoose');
+
 // Get all users with filtering and pagination
 exports.getAllUsers = async (req, res) => {
   try {
+    const rawQuery = req.query || {};
     const {
       role,
       status,
@@ -20,49 +29,65 @@ exports.getAllUsers = async (req, res) => {
       limit = 20,
       sortBy = 'createdAt',
       sortOrder = 'desc'
-    } = req.query;
+    } = rawQuery;
 
-    // Build search criteria
+    // Build base search criteria (exclude deactivated by default)
     const searchCriteria = { status: { $ne: 'deactivated' } };
 
-    if (role) {
+    // Whitelist validation for role
+    const allowedRoles = ['parent', 'tutor', 'admin'];
+    if (role && typeof role === 'string' && allowedRoles.includes(role)) {
       searchCriteria.role = role;
     }
 
-    if (status === 'verified') {
-      searchCriteria.isVerified = true;
-    } else if (status === 'unverified') {
-      searchCriteria.isVerified = false;
-    } else if (status === 'rejected') {
-      searchCriteria.status = 'rejected';
-    } else if (status === 'deactivated') {
-      searchCriteria.status = 'deactivated';
+    // Whitelist validation for status
+    if (typeof status === 'string') {
+      if (status === 'verified') {
+        searchCriteria.isVerified = true;
+      } else if (status === 'unverified') {
+        searchCriteria.isVerified = false;
+      } else if (status === 'rejected') {
+        searchCriteria.status = 'rejected';
+      } else if (status === 'deactivated') {
+        searchCriteria.status = 'deactivated';
+      }
     }
 
-    if (search) {
+    // Validate and escape search input
+    if (typeof search === 'string' && search.trim().length > 0) {
+      // Limit search length to avoid abuse
+      const safeSearch = search.trim().slice(0, 200);
+      const escapedSearch = escapeRegex(safeSearch);
       searchCriteria.$or = [
-        { name: { $regex: search, $options: 'i' } },
-        { email: { $regex: search, $options: 'i' } },
-        { location: { $regex: search, $options: 'i' } }
+        { name: { $regex: escapedSearch, $options: 'i' } },
+        { email: { $regex: escapedSearch, $options: 'i' } },
+        { location: { $regex: escapedSearch, $options: 'i' } }
       ];
     }
 
-    const skip = (parseInt(page) - 1) * parseInt(limit);
-    const sortOptions = {};
-    sortOptions[sortBy] = sortOrder === 'desc' ? -1 : 1;
+    // Pagination: enforce numeric and reasonable bounds
+    const pg = Math.max(1, parseInt(page, 10) || 1);
+    const lim = Math.min(100, Math.max(1, parseInt(limit, 10) || 20));
+    const skip = (pg - 1) * lim;
 
-    // Get users with pagination
+    // Sort: whitelist allowed fields and orders to prevent malicious field injection
+    const allowedSortFields = ['createdAt', 'name', 'email', 'role', 'rating', 'totalReviews'];
+    const sortField = allowedSortFields.includes(sortBy) ? sortBy : 'createdAt';
+    const sortDirection = sortOrder === 'asc' ? 1 : -1;
+    const sortOptions = { [sortField]: sortDirection };
+
+    // Execute query with safe parameters
     const users = await User.find(searchCriteria)
       .select('-password')
       .populate('subjects.subject', 'name')
       .sort(sortOptions)
       .skip(skip)
-      .limit(parseInt(limit));
+      .limit(lim);
 
     // Get total count for pagination
     const totalUsers = await User.countDocuments(searchCriteria);
 
-    // Get user statistics
+    // Get user statistics (unchanged semantics, safe as no user input is used here)
     const stats = {
       total: await User.countDocuments({ status: { $ne: 'deactivated' } }),
       parents: await User.countDocuments({ role: 'parent', status: { $ne: 'deactivated' } }),
@@ -74,7 +99,7 @@ exports.getAllUsers = async (req, res) => {
       deactivated: await User.countDocuments({ status: 'deactivated' })
     };
 
-    const totalPages = Math.ceil(totalUsers / parseInt(limit));
+    const totalPages = Math.ceil(totalUsers / lim);
 
     res.json({
       success: true,
@@ -82,12 +107,12 @@ exports.getAllUsers = async (req, res) => {
         users,
         statistics: stats,
         pagination: {
-          currentPage: parseInt(page),
+          currentPage: pg,
           totalPages,
           totalUsers,
-          hasNextPage: parseInt(page) < totalPages,
-          hasPrevPage: parseInt(page) > 1,
-          limit: parseInt(limit)
+          hasNextPage: pg < totalPages,
+          hasPrevPage: pg > 1,
+          limit: lim
         }
       }
     });
@@ -107,7 +132,17 @@ exports.getUserDetails = async (req, res) => {
   try {
     const { userId } = req.params;
 
-    const user = await User.findById(userId).select('-password').populate('subjects.subject', 'name');
+    // Validate userId to prevent injection and malformed queries
+    if (!userId || typeof userId !== 'string' || !mongoose.Types.ObjectId.isValid(userId)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid userId parameter'
+      });
+    }
+
+    const userObjectId = mongoose.Types.ObjectId(userId);
+
+    const user = await User.findById(userObjectId).select('-password').populate('subjects.subject', 'name');
     if (!user) {
       return res.status(404).json({
         success: false,
@@ -119,12 +154,12 @@ exports.getUserDetails = async (req, res) => {
 
     if (user.role === 'tutor') {
       // Get tutor-specific data
-      const totalBookings = await Booking.countDocuments({ tutorId: userId });
+      const totalBookings = await Booking.countDocuments({ tutorId: userObjectId });
       const completedBookings = await Booking.countDocuments({
-        tutorId: userId,
+        tutorId: userObjectId,
         status: 'completed'
       });
-      const totalReviews = await Review.countDocuments({ tutorId: userId });
+      const totalReviews = await Review.countDocuments({ tutorId: userObjectId });
       const averageRating = await Review.aggregate([
         { $match: { tutorId: user._id } },
         { $group: { _id: null, avgRating: { $avg: '$rating' } } }
@@ -138,12 +173,12 @@ exports.getUserDetails = async (req, res) => {
       };
     } else if (user.role === 'parent') {
       // Get parent-specific data
-      const totalBookings = await Booking.countDocuments({ parentId: userId });
+      const totalBookings = await Booking.countDocuments({ parentId: userObjectId });
       const completedBookings = await Booking.countDocuments({
-        parentId: userId,
+        parentId: userObjectId,
         status: 'completed'
       });
-      const totalReviews = await Review.countDocuments({ parentId: userId });
+      const totalReviews = await Review.countDocuments({ parentId: userObjectId });
 
       additionalData = {
         totalBookings,
@@ -1221,7 +1256,7 @@ exports.createSubject = async (req, res) => {
     }
 
     // Check if subject already exists
-    const existingSubject = await Subject.findOne({ name: { $regex: new RegExp(`^${name}$`, 'i') } });
+    const existingSubject = await Subject.findOne({ name: escapeRegex(name) });
     if (existingSubject) {
       return res.status(400).json({
         success: false,
@@ -1284,7 +1319,7 @@ exports.updateSubject = async (req, res) => {
 
     // Check if new name conflicts with existing subject (excluding current subject)
     const nameConflict = await Subject.findOne({
-      name: { $regex: new RegExp(`^${name}$`, 'i') },
+      name: escapeRegex(name),
       _id: { $ne: subjectId }
     });
 

@@ -17,7 +17,6 @@ const { transformTutorData } = require('../utils/imageUrl');
 const validator = require('validator');
 
 
-// Hardcoded Google OAuth2 credentials
 const GOOGLE_CLIENT_ID =process.env.GOOGLE_CLIENT_ID;
 const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
 const GOOGLE_REDIRECT_URI = `${process.env.VITE_API_URL}/api/google/callback`;
@@ -26,183 +25,79 @@ const GOOGLE_REDIRECT_URI = `${process.env.VITE_API_URL}/api/google/callback`;
 exports.searchTutors = async (req, res) => {
   try {
     const {
-      search, // alias for name
-      name,
-      rating,
-      minRate,
-      maxRate,
-      location,
-      subject,
-      page = 1,
-      limit = 10,
-      sortBy = 'rating' // ADDED: sortBy parameter with default
+      search, name, rating, minRate, maxRate, location, subject,
+      page = 1, limit = 10, sortBy = 'rating'
     } = req.query;
 
-    // Build criteria for all filters present
-    let searchCriteria = {
-      role: 'tutor',
-      isVerified: true
-    };
-    
-    // ADDED: Sorting logic
-    let sortCriteria = {};
-    switch(sortBy) {
-      case 'date':
-      case 'createdAt':
-      case 'newest':
-        sortCriteria = { date: -1 }; // Newest tutors first
-        break;
-      case 'rating':
-        sortCriteria = { rating: -1, totalReviews: -1 };
-        break;
-      case 'price_low':
-        sortCriteria = { 'subjects.hourlyRate': 1, rating: -1 };
-        break;
-      case 'price_high':
-        sortCriteria = { 'subjects.hourlyRate': -1, rating: -1 };
-        break;
-      case 'name':
-        sortCriteria = { name: 1 };
-        break;
-      default:
-        sortCriteria = { rating: -1, totalReviews: -1 };
-    }
+    const searchCriteria = { role: 'tutor', isVerified: true };
+    let sortCriteria = getSearchSortCriteria(sortBy);
 
-    // Name filter
-    if (name || search) {
-      searchCriteria.name = { $regex: name || search, $options: 'i' };
-    }
+    if (name || search) searchCriteria.name = { $regex: name || search, $options: 'i' };
+    if (location) searchCriteria.location = { $regex: location, $options: 'i' };
+    if (rating) searchCriteria.rating = { $gte: parseFloat(rating) };
+    if (subject) searchCriteria.subjects = { $elemMatch: { subject } };
 
-    // Location filter
-    if (location) {
-      searchCriteria.location = { $regex: location, $options: 'i' };
-    }
-
-    // Rating filter
-    if (rating) {
-      searchCriteria.rating = { $gte: parseFloat(rating) };
-    }
-
-    // Subject filter - use $elemMatch to properly match subjects
-    if (subject) {
-      searchCriteria.subjects = { 
-        $elemMatch: { 
-          subject: subject 
-        } 
-      };
-    }
-
-    // Rate filter - handle both min and max rates
     if (minRate || maxRate) {
-      console.log('Rate filtering applied:', { minRate, maxRate });
-      
-      // Create subjects filter for rates
       const rateConditions = {};
-      if (minRate) {
-        rateConditions.hourlyRate = { $gte: parseFloat(minRate) };
-      }
+      if (minRate) rateConditions.hourlyRate = { $gte: parseFloat(minRate) };
       if (maxRate) {
-        if (rateConditions.hourlyRate) {
-          rateConditions.hourlyRate.$lte = parseFloat(maxRate);
-        } else {
-          rateConditions.hourlyRate = { $lte: parseFloat(maxRate) };
-        }
+        if (rateConditions.hourlyRate) rateConditions.hourlyRate.$lte = parseFloat(maxRate);
+        else rateConditions.hourlyRate = { $lte: parseFloat(maxRate) };
       }
 
-      console.log('Rate conditions:', rateConditions);
-
-      // If we already have a subjects filter, combine them
       if (searchCriteria.subjects && searchCriteria.subjects.$elemMatch) {
-        // Merge rate conditions with existing subject filter
-        searchCriteria.subjects.$elemMatch = {
-          ...searchCriteria.subjects.$elemMatch,
-          ...rateConditions
-        };
-        console.log('Merged with existing subject filter:', searchCriteria.subjects.$elemMatch);
+        searchCriteria.subjects.$elemMatch = { ...searchCriteria.subjects.$elemMatch, ...rateConditions };
       } else {
-        // Create new subjects filter for rates
         searchCriteria.subjects = { $elemMatch: rateConditions };
-        console.log('Created new subjects filter:', searchCriteria.subjects);
       }
-      
-      // Override sort criteria when rate filtering is applied
       sortCriteria = { 'subjects.hourlyRate': 1, rating: -1 };
     }
 
-    console.log('Search criteria:', JSON.stringify(searchCriteria, null, 2));
-    console.log('Sort criteria:', sortCriteria); // ADDED: Log sort criteria
-
-    // Pagination
     const skip = (parseInt(page) - 1) * parseInt(limit);
-
-    // Query - Use distinct to get unique tutors
     const tutors = await User.find(searchCriteria)
       .select('-password')
       .populate('subjects.subject')
-      .sort(sortCriteria) // MODIFIED: Use the dynamic sortCriteria
+      .sort(sortCriteria)
       .skip(skip)
       .limit(parseInt(limit))
-      .lean(); // Use lean() for better performance
+      .lean();
 
-    // If subject filter is applied, filter the subjects array to only include the matching subject
-    const tutorsWithFilteredSubjects = tutors.map(tutor => {
-      let filteredSubjects = tutor.subjects || [];
-      
-      // Filter by subject if specified
-      if (subject) {
-        filteredSubjects = filteredSubjects.filter(subjectEntry => 
-          subjectEntry.subject && subjectEntry.subject._id.toString() === subject
-        );
-      }
-      
-      // Filter by rate range if specified
+    const filteredTutors = tutors.map(tutor => {
+      let subjects = tutor.subjects || [];
+      if (subject) subjects = subjects.filter(s => s.subject && s.subject._id.toString() === subject);
       if (minRate || maxRate) {
-        filteredSubjects = filteredSubjects.filter(subjectEntry => {
-          const rate = subjectEntry.hourlyRate;
-          if (minRate && rate < parseFloat(minRate)) return false;
-          if (maxRate && rate > parseFloat(maxRate)) return false;
-          return true;
+        subjects = subjects.filter(s => {
+          const r = s.hourlyRate;
+          return !(minRate && r < parseFloat(minRate)) && !(maxRate && r > parseFloat(maxRate));
         });
       }
-      
-      return {
-        ...tutor,
-        subjects: filteredSubjects
-      };
-    }).filter(tutor => tutor.subjects.length > 0); // Only return tutors that have matching subjects
+      return { ...tutor, subjects };
+    }).filter(t => t.subjects.length > 0);
 
     const totalTutors = await User.countDocuments(searchCriteria);
     const totalPages = Math.ceil(totalTutors / parseInt(limit));
-    const hasNextPage = parseInt(page) < totalPages;
-    const hasPrevPage = parseInt(page) > 1;
-
-    // Transform tutor data for image URLs
-    const tutorsTransformed = tutorsWithFilteredSubjects.map(transformTutorData);
 
     res.json({
       success: true,
       data: {
-        tutors: tutorsTransformed,
+        tutors: filteredTutors.map(transformTutorData),
         pagination: {
           currentPage: parseInt(page),
           totalPages,
           totalTutors,
-          hasNextPage,
-          hasPrevPage,
+          hasNextPage: parseInt(page) < totalPages,
+          hasPrevPage: parseInt(page) > 1,
           limit: parseInt(limit)
         },
-        sortBy: sortBy // ADDED: Return the sort method used
+        sortBy
       }
     });
   } catch (error) {
     console.error('Search tutors error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Error searching for tutors',
-      error: error.message
-    });
+    res.status(500).json({ success: false, message: 'Error searching for tutors', error: error.message });
   }
 };
+
 
 // Book a session with a tutor
 exports.bookSession = async (req, res) => {
@@ -250,8 +145,8 @@ exports.bookSession = async (req, res) => {
     // Check if tutor is available at the requested time
     const dayOfWeek = requestedTime.toLocaleDateString('en-US', { weekday: 'long' }).toLowerCase();
     const timeString = requestedTime.toTimeString().slice(0, 5);
-    
-    const isAvailable = tutor.availability.some(avail => 
+
+    const isAvailable = tutor.availability.some(avail =>
       avail.day === dayOfWeek &&
       avail.startTime <= timeString &&
       avail.endTime >= timeString
@@ -267,7 +162,7 @@ exports.bookSession = async (req, res) => {
     // Check for existing bookings at the same time based on subject hours
     const sessionStartTime = requestedTime.getTime();
     const sessionEndTime = sessionStartTime + (subjectHours * 60 * 60 * 1000); // Convert hours to milliseconds
-    
+
     const existingBooking = await Booking.findOne({
       tutorId,
       sessionTime: {
@@ -400,11 +295,11 @@ exports.getTutorProfile = async (req, res) => {
       .populate('subject', 'name _id')
       .sort({ createdAt: -1 })
       .limit(5);
-     console.log('recentReviews:', recentReviews);
+    console.log('recentReviews:', recentReviews);
     // Get booking statistics
-    const totalSessions = await Booking.countDocuments({ 
-      tutorId, 
-      status: 'completed' 
+    const totalSessions = await Booking.countDocuments({
+      tutorId,
+      status: 'completed'
     });
 
     const responseData = {
@@ -732,11 +627,11 @@ exports.getParentDashboard = async (req, res) => {
     const parent = await User.findById(parentId).populate('childPreferredSubjects');
     let recommendedTutors = [];
     let childSubjectIds = [];
-    
+
     if (parent && parent.childPreferredSubjects && parent.childPreferredSubjects.length > 0) {
       childSubjectIds = parent.childPreferredSubjects.map(s => s._id);
       console.log('Child preferred subjects:', childSubjectIds);
-      
+
       // Find tutors who teach any of the child's preferred subjects
       const tutorsWithAllSubjects = await User.find({
         role: 'tutor',
@@ -747,30 +642,30 @@ exports.getParentDashboard = async (req, res) => {
         .populate('subjects.subject')
         .sort({ rating: -1, totalReviews: -1 })
         .limit(8);
-        
+
       console.log(`Found ${tutorsWithAllSubjects.length} tutors matching child's subjects`);
-      
+
       // FILTER: Only keep the subjects that match child's preferences
       recommendedTutors = tutorsWithAllSubjects.map(tutor => {
-        const filteredSubjects = tutor.subjects.filter(subjectEntry => 
-          subjectEntry.subject && childSubjectIds.some(childSubjId => 
+        const filteredSubjects = tutor.subjects.filter(subjectEntry =>
+          subjectEntry.subject && childSubjectIds.some(childSubjId =>
             childSubjId.toString() === subjectEntry.subject._id.toString()
           )
         );
-        
+
         return {
           ...tutor.toObject(),
           subjects: filteredSubjects
         };
       }).filter(tutor => tutor.subjects.length > 0); // Remove tutors with no matching subjects after filtering
     }
-    
+
     // If no child preferred subjects or no matching tutors, show top-rated tutors
     if (recommendedTutors.length === 0) {
       console.log('No child preferred subjects or no matching tutors, showing top-rated tutors');
-      recommendedTutors = await User.find({ 
-        role: 'tutor', 
-        isVerified: true 
+      recommendedTutors = await User.find({
+        role: 'tutor',
+        isVerified: true
       })
         .select('-password')
         .populate('subjects.subject')
@@ -803,7 +698,7 @@ exports.getParentDashboard = async (req, res) => {
       select: '-password',
       populate: { path: 'subjects.subject' }
     }).populate('recentlyVisited.subjectId');
-    
+
     let recentlyVisited = [];
     if (parentWithVisits && parentWithVisits.recentlyVisited && parentWithVisits.recentlyVisited.length > 0) {
       recentlyVisited = parentWithVisits.recentlyVisited
@@ -912,7 +807,7 @@ exports.getAllTutorsBusyTimesForParent = async (req, res) => {
     const tutors = await User.find({ _id: { $in: tutorIds } }).select('name subjects');
     const tutorIdToName = {};
     const tutorIdToSubjects = {};
-    tutors.forEach(t => { 
+    tutors.forEach(t => {
       tutorIdToName[t._id.toString()] = t.name;
       tutorIdToSubjects[t._id.toString()] = t.subjects;
     });
@@ -922,13 +817,13 @@ exports.getAllTutorsBusyTimesForParent = async (req, res) => {
     for (const tutorId of tutorIds) {
       const tutorBookings = await Booking.find({ tutorId, parentId: { $ne: parentId }, status: { $in: ['requested', 'confirmed'] } });
       const tutorWaitlist = await Waitlist.find({ tutorId, parentId: { $ne: parentId } });
-      
+
       busyTimesByTutor[tutorId] = [
         ...tutorBookings.map(b => {
           // Find the subject entry in tutor's profile to get hours
           const subjectEntry = tutorIdToSubjects[tutorId]?.find(s => s.subject.toString() === b.subjectId?.toString());
           const durationInHours = subjectEntry?.hours || 1;
-          
+
           return {
             type: 'booking',
             start: b.sessionTime,
@@ -940,7 +835,7 @@ exports.getAllTutorsBusyTimesForParent = async (req, res) => {
           // Find the subject entry in tutor's profile to get hours
           const subjectEntry = tutorIdToSubjects[tutorId]?.find(s => s.subject.toString() === w.subject?.toString());
           const durationInHours = subjectEntry?.hours || 1;
-          
+
           return {
             type: 'waitlist',
             start: w.requestedTime,
@@ -1003,7 +898,7 @@ exports.getAllTutorsBusyTimesForParent = async (req, res) => {
           //     console.error(`Failed to delete event ${event.id}:`, err.message);
           //   }
           // }
-          
+
         }
       } catch (err) {
         console.error('Could not delete old calendar events:', err.message);
@@ -1031,13 +926,13 @@ exports.getAllTutorsBusyTimesForParent = async (req, res) => {
 
       // Insert events into Google Calendar (primary calendar)
       let insertedCount = 0;
-        const insertPromises = events.map(event => {
-          return calendar.events.insert({
-            calendarId: 'primary',
-            resource: event
-          }).then(() => insertedCount++);
-        });
-        await Promise.all(insertPromises);
+      const insertPromises = events.map(event => {
+        return calendar.events.insert({
+          calendarId: 'primary',
+          resource: event
+        }).then(() => insertedCount++);
+      });
+      await Promise.all(insertPromises);
       // for (const event of events) {
       //   try {
       //     await calendar.events.insert({
@@ -1049,7 +944,7 @@ exports.getAllTutorsBusyTimesForParent = async (req, res) => {
       //     console.error('Failed to insert event:', err.message);
       //   }
       //}
-      
+
       syncMessage = `Synced calendar: ${insertedCount} new slots added, ${deletedCount} old slots removed.`;
     } catch (err) {
       console.error('Google Calendar sync failed:', err);
@@ -1493,21 +1388,21 @@ exports.getTutorReviews = async (req, res) => {
       error: error.message
     });
   }
-}; 
+};
 
 // Get all subjects with tutor counts
 exports.getSubjectsWithTutorCounts = async (req, res) => {
   try {
     const [subjects, tutors] = await Promise.all([
       Subject.find({}),
-      User.find({ 
-        role: 'tutor', 
-        isVerified: true 
+      User.find({
+        role: 'tutor',
+        isVerified: true
       }).select('subjects')
     ]);
-    
+
     const subjectCounts = {};
-    
+
     // Count tutors for each subject
     tutors.forEach(tutor => {
       if (tutor.subjects && tutor.subjects.length > 0) {
@@ -1520,13 +1415,13 @@ exports.getSubjectsWithTutorCounts = async (req, res) => {
         });
       }
     });
-    
+
     // Add counts to subjects
     const subjectsWithCounts = subjects.map(subject => ({
       ...subject.toObject(),
       tutorsCount: subjectCounts[subject._id.toString()] || 0
     }));
-    
+
     res.json({
       success: true,
       data: {
