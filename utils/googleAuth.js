@@ -1,25 +1,28 @@
 const { google } = require('googleapis');
-const googleSecrets = require('./client_secret_955947755002-996k377jeeg89e3f0c8dr8c6tcmc7bvc.apps.googleusercontent.com.json');
-
 
 function getOAuth2Client() {
-  const { client_id, client_secret } = googleSecrets.web;
+  const client_id = process.env.GOOGLE_CLIENT_ID;
+  const client_secret = process.env.GOOGLE_CLIENT_SECRET;
+  const redirect_uri = process.env.GOOGLE_REDIRECT_URI || `${process.env.VITE_API_URL}/api/google/callback`;
+
   return new google.auth.OAuth2(
     client_id,
     client_secret,
-    `${process.env.VITE_API_URL}/api/google/callback`
+    redirect_uri
   );
 }
 
 // For Google Login 
 function getOAuth2ClientForLogin() {
-    const { client_id, client_secret } = googleSecrets.web;
-    const BASE_URL = process.env.BASE_URL || 'http://localhost:5001';
+  const client_id = process.env.GOOGLE_CLIENT_ID;
+  const client_secret = process.env.GOOGLE_CLIENT_SECRET;
+  const BASE_URL = process.env.BASE_URL || 'http://localhost:5001';
+
   return new google.auth.OAuth2(
     client_id,
     client_secret,
-      `${BASE_URL}/api/google/login/callback`
+    `${BASE_URL}/api/google/login/callback`
   );
 }
 
-module.exports = { getOAuth2Client,getOAuth2ClientForLogin }; 
+module.exports = { getOAuth2Client, getOAuth2ClientForLogin };
