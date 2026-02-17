@@ -17,12 +17,18 @@ require('./models/Review');
 require('./models/Waitlist');
 const helmet = require('helmet');
 // require('./models/Message'); // Uncomment if Message.js is present
-const { authLimiter, passwordResetLimiter, apiLimiter, refreshTokenLimiter } = require('./middleware/rateLimit');
-
 const app = express();
+
+// Trust proxy - Essential for rate limiting if behind a proxy/load balancer
+app.set('trust proxy', 1);
 
 // Connect Database
 connectDB();
+
+const { authLimiter, passwordResetLimiter, apiLimiter, refreshTokenLimiter, globalLimiter } = require('./middleware/rateLimit');
+
+// Apply global rate limiter to ALL requests (base protection)
+app.use(globalLimiter);
 
 // Middleware
 app.use(cors({
@@ -173,7 +179,7 @@ const notificationRoutes = require('./routes/notification');
 app.use('/api/notifications', notificationRoutes);
 
 const PORT = process.env.PORT || 5001;
-app.listen(PORT, () => console.log(`Server started on port ${PORT}`)); 
+app.listen(PORT, () => console.log(`Server started on port ${PORT}`));
 
 app.get('/', (req, res) => {
   res.send('LearnLink API is running');
