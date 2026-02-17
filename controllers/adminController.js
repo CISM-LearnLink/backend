@@ -15,6 +15,8 @@ const escapeRegex = (str) => {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 };
 
+const mongoose = require('mongoose');
+
 // Get all users with filtering and pagination
 exports.getAllUsers = async (req, res) => {
   try {
@@ -130,7 +132,17 @@ exports.getUserDetails = async (req, res) => {
   try {
     const { userId } = req.params;
 
-    const user = await User.findById(userId).select('-password').populate('subjects.subject', 'name');
+    // Validate userId to prevent injection and malformed queries
+    if (!userId || typeof userId !== 'string' || !mongoose.Types.ObjectId.isValid(userId)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid userId parameter'
+      });
+    }
+
+    const userObjectId = mongoose.Types.ObjectId(userId);
+
+    const user = await User.findById(userObjectId).select('-password').populate('subjects.subject', 'name');
     if (!user) {
       return res.status(404).json({
         success: false,
@@ -142,12 +154,12 @@ exports.getUserDetails = async (req, res) => {
 
     if (user.role === 'tutor') {
       // Get tutor-specific data
-      const totalBookings = await Booking.countDocuments({ tutorId: userId });
+      const totalBookings = await Booking.countDocuments({ tutorId: userObjectId });
       const completedBookings = await Booking.countDocuments({
-        tutorId: userId,
+        tutorId: userObjectId,
         status: 'completed'
       });
-      const totalReviews = await Review.countDocuments({ tutorId: userId });
+      const totalReviews = await Review.countDocuments({ tutorId: userObjectId });
       const averageRating = await Review.aggregate([
         { $match: { tutorId: user._id } },
         { $group: { _id: null, avgRating: { $avg: '$rating' } } }
@@ -161,12 +173,12 @@ exports.getUserDetails = async (req, res) => {
       };
     } else if (user.role === 'parent') {
       // Get parent-specific data
-      const totalBookings = await Booking.countDocuments({ parentId: userId });
+      const totalBookings = await Booking.countDocuments({ parentId: userObjectId });
       const completedBookings = await Booking.countDocuments({
-        parentId: userId,
+        parentId: userObjectId,
         status: 'completed'
       });
-      const totalReviews = await Review.countDocuments({ parentId: userId });
+      const totalReviews = await Review.countDocuments({ parentId: userObjectId });
 
       additionalData = {
         totalBookings,
