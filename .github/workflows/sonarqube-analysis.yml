@@ -6,10 +6,12 @@ on:
       - main
       - master
       - develop
+      - 215049J_3
   pull_request:
     branches:
       - main
       - master
+      - 215049J_3
 
 jobs:
   sonarcloud:
