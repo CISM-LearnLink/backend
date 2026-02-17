@@ -9,6 +9,12 @@ const Waitlist = require('../models/Waitlist');
 const Dispute = require('../models/Dispute');
 const Subject = require('../models/Subject');
 
+// Security: Escape special regex characters to prevent NoSQL injection
+const escapeRegex = (str) => {
+  if (typeof str !== 'string') return '';
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+};
+
 // Get all users with filtering and pagination
 exports.getAllUsers = async (req, res) => {
   try {
@@ -40,10 +46,12 @@ exports.getAllUsers = async (req, res) => {
     }
 
     if (search) {
+      // Security: Escape regex special characters to prevent NoSQL injection
+      const escapedSearch = escapeRegex(search);
       searchCriteria.$or = [
-        { name: { $regex: search, $options: 'i' } },
-        { email: { $regex: search, $options: 'i' } },
-        { location: { $regex: search, $options: 'i' } }
+        { name: { $regex: escapedSearch, $options: 'i' } },
+        { email: { $regex: escapedSearch, $options: 'i' } },
+        { location: { $regex: escapedSearch, $options: 'i' } }
       ];
     }
 
@@ -1221,7 +1229,7 @@ exports.createSubject = async (req, res) => {
     }
 
     // Check if subject already exists
-    const existingSubject = await Subject.findOne({ name: { $regex: new RegExp(`^${name}$`, 'i') } });
+    const existingSubject = await Subject.findOne({ name: escapeRegex(name) });
     if (existingSubject) {
       return res.status(400).json({
         success: false,
@@ -1284,7 +1292,7 @@ exports.updateSubject = async (req, res) => {
 
     // Check if new name conflicts with existing subject (excluding current subject)
     const nameConflict = await Subject.findOne({
-      name: { $regex: new RegExp(`^${name}$`, 'i') },
+      name: escapeRegex(name),
       _id: { $ne: subjectId }
     });
 
