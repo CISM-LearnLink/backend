@@ -12,7 +12,6 @@ function getOAuth2Client() {
   );
 }
 
-// For Google Login 
 function getOAuth2ClientForLogin() {
   const client_id = process.env.GOOGLE_CLIENT_ID;
   const client_secret = process.env.GOOGLE_CLIENT_SECRET;

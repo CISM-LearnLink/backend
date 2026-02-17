@@ -11,6 +11,8 @@ const { getOAuth2Client } = require('../utils/googleAuth');
 const { google } = require('googleapis');
 const { createNotification } = require('../utils/notification');
 const Dispute = require('../models/Dispute');
+const validator = require('validator');
+
 
 // Get tutor profile
 exports.getProfile = async (req, res) => {
@@ -97,6 +99,13 @@ exports.updateProfile = async (req, res) => {
       profileImage
     } = req.body;
 
+    const cleanName = validator.escape(name);
+    const cleanLocation = validator.escape(location);
+    const cleanBio = bio ? validator.escape(bio) : '';
+    const cleanEducation = education ? validator.escape(education) : '';
+    const cleanExperience = experience ? validator.escape(experience) : '';
+
+
     // Parse JSON strings from FormData
     let parsedSubjects = [];
     let parsedExpertise = [];
@@ -179,13 +188,13 @@ exports.updateProfile = async (req, res) => {
     const updatedTutor = await User.findByIdAndUpdate(
       tutorId,
       {
-        name,
+        name: cleanName,
         subjects: normalizedSubjects,
         expertise: parsedExpertise,
-        location,
-        bio,
-        education,
-        experience,
+        location: cleanLocation,
+        bio: cleanBio,
+        education: cleanEducation,
+        experience: cleanExperience,
         profileImage: profileImagePath
       },
       { new: true, runValidators: true }
@@ -753,6 +762,22 @@ exports.sendMessage = async (req, res) => {
   try {
     const { receiverId, content, bookingId } = req.body;
     const senderId = req.user.id;
+   if (!content || content.trim().length === 0) {
+  return res.status(400).json({
+    success: false,
+    message: 'Message content is required'
+  });
+}
+
+if (content.length > 1000) {
+  return res.status(400).json({
+    success: false,
+    message: 'Message too long'
+  });
+}
+
+const cleanContent = validator.escape(content.trim());
+
 
     // Validate required fields
     if (!receiverId || !content) {
@@ -784,10 +809,10 @@ exports.sendMessage = async (req, res) => {
 
     // Create the message
     const message = new Message({
-      senderId,
+      senderId: req.user.id,
       receiverId,
       bookingId,
-      content
+      content: cleanContent
     });
 
     await message.save();
@@ -1143,6 +1168,9 @@ exports.getBookingsForDispute = async (req, res) => {
 exports.createDispute = async (req, res) => {
   try {
     const { bookingId, disputeType, title, description, priority = 'medium' } = req.body;
+    const cleanTitle = validator.escape(title.trim());
+    const cleanDescription = validator.escape(description.trim());
+
 
     if (!bookingId || !disputeType || !title || !description) {
       return res.status(400).json({
@@ -1176,8 +1204,8 @@ exports.createDispute = async (req, res) => {
       bookingId,
       subjectId: booking.subject,
       disputeType,
-      title,
-      description,
+      title: cleanTitle,
+      description: cleanDescription,
       priority
     });
 
@@ -1278,9 +1306,10 @@ exports.addDisputeMessage = async (req, res) => {
         message: 'Access denied'
       });
     }
+const cleanMessage = validator.escape(message.trim());
 
     // Add message
-    await dispute.addMessage(req.user.id, 'tutor', message);
+    await dispute.addMessage(req.user.id, 'tutor', cleanMessage);
 
     // Update dispute status to under_review if it was pending
     if (dispute.status === 'pending') {

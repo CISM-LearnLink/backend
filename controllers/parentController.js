@@ -14,32 +14,12 @@ const { getOAuth2Client } = require('../utils/googleAuth');
 const { google } = require('googleapis');
 const { createNotification } = require('../utils/notification');
 const { transformTutorData } = require('../utils/imageUrl');
+const validator = require('validator');
 
-// Hardcoded Google OAuth2 credentials removed for security
-const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
+
+const GOOGLE_CLIENT_ID =process.env.GOOGLE_CLIENT_ID;
 const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
-const GOOGLE_REDIRECT_URI = process.env.GOOGLE_REDIRECT_URI || `${process.env.VITE_API_URL}/api/google/callback`;
-
-
-// Helper to get sort criteria
-const getSearchSortCriteria = (sortBy) => {
-  switch (sortBy) {
-    case 'date':
-    case 'createdAt':
-    case 'newest':
-      return { date: -1 };
-    case 'rating':
-      return { rating: -1, totalReviews: -1 };
-    case 'price_low':
-      return { 'subjects.hourlyRate': 1, rating: -1 };
-    case 'price_high':
-      return { 'subjects.hourlyRate': -1, rating: -1 };
-    case 'name':
-      return { name: 1 };
-    default:
-      return { rating: -1, totalReviews: -1 };
-  }
-};
+const GOOGLE_REDIRECT_URI = `${process.env.VITE_API_URL}/api/google/callback`;
 
 // Search tutors with advanced filtering and rule-based matching
 exports.searchTutors = async (req, res) => {
@@ -208,6 +188,7 @@ exports.bookSession = async (req, res) => {
         data: { waitlistId: waitlistEntry._id }
       });
     }
+  const cleanNotes = notes ? validator.escape(notes.trim()) : '';
 
     // Create the booking
     const booking = new Booking({
@@ -215,7 +196,7 @@ exports.bookSession = async (req, res) => {
       tutorId,
       sessionTime: requestedTime,
       subject,
-      notes,
+      notes: cleanNotes,
       status: 'requested'
     });
 
